@@ -50,6 +50,13 @@ export function createGeminiClientWithFn(generateContent: GenerateContentFn): Ll
 }
 
 async function callOnce(generateContent: GenerateContentFn, request: LlmRequest): Promise<GenerateContentResponse> {
+  // A signal aborted before this call started never fires a freshly-attached listener (the
+  // DOM only notifies listeners of abort()s that happen *after* they're attached) — across a
+  // multi-step run, a client disconnect during step 1 must still be honored by step 2's call.
+  if (request.signal?.aborted) {
+    throw new ClientAbortedError();
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PER_CALL_TIMEOUT_MS);
   const onExternalAbort = () => controller.abort();

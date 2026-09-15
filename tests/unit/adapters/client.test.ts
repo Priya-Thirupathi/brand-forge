@@ -171,4 +171,19 @@ describe("createGeminiClientWithFn", () => {
     expect(outcome).toMatchObject({ kind: "failed", error: "aborted", transportRetries: 0 });
     expect(generateContent).toHaveBeenCalledTimes(1);
   });
+
+  it("maps a request whose signal was already aborted before the call to a failed aborted outcome", async () => {
+    // A signal aborted in a previous step never fires a freshly-attached listener on this
+    // call's controller — this call must check `signal.aborted` up front instead of relying
+    // on the 'abort' event alone (a multi-step run reuses the same external signal).
+    const controller = new AbortController();
+    controller.abort();
+    const generateContent: GenerateContentFn = vi.fn();
+    const client = createGeminiClientWithFn(generateContent);
+
+    const outcome = await client.generateJson(baseRequest({ signal: controller.signal }));
+
+    expect(outcome).toMatchObject({ kind: "failed", error: "aborted", transportRetries: 0 });
+    expect(generateContent).not.toHaveBeenCalled();
+  });
 });
