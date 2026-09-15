@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts",
+    "check-models": "tsx scripts/check-models.ts",
     "test": "vitest run"
   },
   "dependencies": {
