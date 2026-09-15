@@ -1,0 +1,30 @@
+// Starter list — NOT curated, flagged for review. List-based only, no trademark search
+// (TRD.md §7 "Known limitations"). Covers the brands most likely to collide with names in
+// the ten seeded categories.
+export const FAMOUS_BRANDS: readonly string[] = [
+  "coca-cola",
+  "coca cola",
+  "pepsi",
+  "red bull",
+  "gatorade",
+  "nike",
+  "adidas",
+  "apple",
+  "starbucks",
+  "folgers",
+  "nescafe",
+  "yeti",
+  "hydro flask",
+  "stanley",
+  "nature valley",
+  "clif bar",
+  "kind",
+  "purina",
+  "milk-bone",
+  "bath & body works",
+  "the body shop",
+  "cerave",
+  "neutrogena",
+  "gap",
+  "hanes",
+];

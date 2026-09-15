@@ -1,0 +1,331 @@
+# Decision Log — BrandForge
+
+Each entry records the decision, why it was made, and the alternatives that were rejected (with reasons). `PRD.md` and `TRD.md` reference entries as **[Dn]**. Entries marked **Revised** say what changed and why; the log keeps the history rather than silently rewriting it.
+
+---
+
+### D1 — Category and material are chosen from dropdowns
+**Decision:** The user picks a category (10 options) and one of that category's material options. The product idea stays free text.
+
+**Why:** Category + material is the join key into feasibility data. A dropdown makes the lookup deterministic, guarantees an estimate always exists, and makes the material-consistency guardrail exact.
+
+**Rejected:**
+- *LLM infers category from the idea* — an extra LLM call (and free-tier quota) plus a silent failure mode: a wrong or invented slug yields the wrong estimate.
+- *Category only, one material per category* — a user who types "bamboo water bottle" would get stainless-steel copy and costs, contradicting their own idea.
+
+---
+
+### D2 — Gemini API on the free tier is the only LLM provider
+**Revised 2026-09-15:** was OpenAI. Changed because the project runs on free-tier keys only.
+
+**Decision:** All generation (and, in Stage 2, judging) uses the Gemini API via `@google/genai`, on a Google Cloud project with **no billing account**. Two tiers configured by env: `strong` (default `gemini-3.8-flash`) and `cheap` (default `gemini-3.5-flash-lite`). Token counts are recorded; dollar cost is not tracked because it is always $0.
+
+**Why:**
+- A project without billing cannot incur charges, so a public demo link has zero spend risk.
+- Both tiers are stable models on the free tier and support JSON-schema structured output.
+- Quota (requests per minute/day, per project), not money, becomes the constraint the design has to respect — see D5, D21, D22.
+
+**Rejected:**
+- *OpenAI* — paid only.
+- *Tracking estimated cost* — every value would be 0 on the free tier; token counts carry the same information for later analysis.
+
+**Accepted trade-off:** Google's pricing page states free-tier content is "Used to improve our products". The UI discloses this (D6).
+
+---
+
+### D3 — The eval harness is a TypeScript CLI in this repo; no HTTP trigger
+**Revised 2026-09-15:** was a Python CLI using DeepEval. Changed for a single-language full-stack codebase and the Gemini switch.
+
+**Decision:** Stage 2 adds a TypeScript CLI that calls the app's `/api/generate` over HTTP, scores results (deterministic metrics + an LLM-judge rubric), and stores eval runs in Postgres. It imports the same Zod contracts as the app. `POST /api/eval/run` does not exist.
+
+**Why:**
+- The PRD requires the harness to detect quality drops. Deterministic checks alone can't (structured output keeps schema validity near 100%, retries hide pass-rate drops, bland names pass every rule), so an LLM judge is required.
+- One language: the CLI reuses `lib/contracts` types and schemas, so the app and harness can't drift.
+- It evolves an existing prototype (`prior-eval-prototype`: good vs. regressed prompt, one run, average score) into a rigorous harness (repeats, confidence intervals, stored baselines).
+- Calling the app over HTTP tests the running system as a black box and measures real latency.
+
+**Rejected:**
+- *Python + DeepEval* — a second language and duplicated response models (Pydantic) for a library whose main value here was its name.
+- *`POST /api/eval/run`* — a single request running dozens of generations exceeds serverless duration limits, and a public trigger lets anyone burn the project's daily quota.
+
+---
+
+### D4 — No eval scoring on live user runs
+**Decision:** Live runs record guardrail outcomes, retries, latency, and tokens. Judge scores exist only in the offline harness.
+
+**Why:** A judge call on every generation adds latency and consumes free-tier quota, and live runs have no expected outcome to score against. Regression detection needs comparable scores on a fixed fixture.
+
+**Rejected:** *Async judging after the response* — still spends quota per generation and scores an uncontrolled population that can't be compared across versions.
+
+---
+
+### D5 — The public demo is open, bounded by quota
+**Revised 2026-09-15:** was bounded by a provider spend cap. Changed because the free tier has no spend, only quota.
+
+**Decision:** No login or access code. Per-IP limit (default 10 generations/hour), a rolling 24-hour global cap sized below the project's requests-per-day quota, and no public eval trigger. When Gemini reports the daily quota is exhausted, the UI shows a "demo quota reached" notice and the gallery keeps working.
+
+**Why:** The link goes into job applications; any friction lowers the chance a reviewer tries it. A project without billing makes openness safe on cost. The global cap keeps one visitor from exhausting the day's quota for everyone else.
+
+**Rejected:**
+- *Access code* — reviewers skimming an application often won't hunt for a code.
+- *Per-IP limit only* — defeated by IP rotation; the global cap is the backstop.
+
+---
+
+### D6 — Generations form a public shared gallery
+**Revised 2026-09-15:** semantic search removed (D14); the gallery is filtered by category.
+
+**Decision:** All successful user generations appear in the gallery. The Generate tab states upfront that ideas are stored, publicly visible, and sent to Gemini's free tier (where Google may use them to improve its products). Offensive items are hidden manually with a `hidden` flag. Eval-generated content never appears.
+
+**Why:** A first-time visitor — often a reviewer — sees a populated gallery instead of an empty page.
+
+**Rejected:** *Per-session (anonymous cookie) visibility* — every new visitor starts empty, and "my brands" vanish when cookies clear.
+
+---
+
+### D7 — Hard failures show reasons, not content
+**Decision:** A rejected run shows which step failed and plain-language rule messages, with a "Try again" button. No generated content from a failing run is shown.
+
+**Why:** It keeps the promise that users never see policy-violating output. Visible rule names demonstrate the guardrails working. The rejection rate is measured (PRD M2), so rejections can't hide quality problems.
+
+**Rejected:**
+- *Show the best attempt with a warning* — a banned word or health claim "with a warning" has still been shown.
+- *Auto-regenerate until it passes* — multiplies latency and quota use, and hides the failure rate.
+
+---
+
+### D8 — The naming agent returns three candidates
+**Decision:** Naming returns 3 candidates ordered by preference. The first one passing all name rules is selected automatically, and the other passing names are shown. (Stage 5: picking an alternate regenerates the rest of the copy around it.)
+
+**Why:** Founders want options. A candidate that fails a rule is dropped instead of forcing a retry, which saves quota and latency.
+
+**Rejected:**
+- *One name* — any name failure forces a retry, and the user gets no choice.
+- *Pause the chain so the user picks first* — a stateful two-request flow before any result.
+- *Accept a free-text name on regenerate* — a new unvalidated input path.
+
+---
+
+### D9 — The feasibility lookup runs before generation
+**Decision:** Look up the feasibility option first, pass material, cost, MOQ and lead time into the agents, and enforce a `copy.material` guardrail. The UI also shows the cash needed for a first production run (MOQ × per-unit cost range).
+
+**Why:** The product's core problem is bridging creative output with physical constraints. With the lookup after generation, the copy can contradict the estimate and nothing notices. The first-run cash figure turns an abstract MOQ into the number a first-time founder actually has to find.
+
+**Rejected:**
+- *Lookup after generation* — the estimate constrains nothing.
+- *LLM-generated feasibility numbers* — invented numbers presented as estimates.
+
+---
+
+### D10 — Brands and products are separate; the tagline agent emits tone notes
+**Decision:** `brands` (name, tone_notes) has many `products`. The tagline/description agent emits `tone_notes` for a new brand; Stage 5 follow-up products read them.
+
+**Why:** Adding a second product under the same brand is a planned user story, and a single row holding brand and copy can't represent it. Emitting tone notes inside an existing call costs no extra request.
+
+**Rejected:**
+- *Separate tone-extraction agent* — one more call per brand against quota and latency.
+- *Find the brand by name* — names aren't unique.
+
+---
+
+### D11 — Validate per agent; one quality retry with feedback
+**Revised 2026-09-15:** timeouts and provider errors are no longer quality attempts; they belong to the transport layer (D21).
+
+**Decision:** Each agent's output is checked immediately: valid JSON, matching shape, not safety-blocked, passing its guardrail rules. A content failure gets exactly one retry, and the retry prompt lists the failed rules. A second content failure rejects the run. Transport failures (after D21's retries) end the run with `error`, not a quality retry.
+
+**Why:**
+- *Per agent:* validating only at the end of the chain throws away downstream calls when an upstream step fails.
+- *Feedback:* a blind retry often repeats the same violation.
+- *Separate from transport:* a 429 says nothing about content quality; retrying it with "feedback" wastes a call and muddies the retry metrics.
+
+**Rejected:**
+- *More quality retries* — latency and quota, and it masks bad prompts.
+- *One shared retry budget for everything* — a throttled request would consume the chance to fix a real content failure.
+
+---
+
+### D12 — Model routing is decided from eval data
+**Revised 2026-09-15:** cost is $0 on the free tier, so the tie-breakers are latency and per-model quota.
+
+**Decision:** Stage 1 runs every step on `strong`. In Stage 5, the harness runs each step on `cheap`; a step moves down only if no quality metric is flagged as a regression, and the move is justified by measured latency or quota headroom.
+
+**Why:** Output length isn't difficulty — the name is short but the most creative output. Measuring gives an evidence-backed story instead of an up-front rule. Starting on `strong` establishes the quality baseline first.
+
+**Rejected:** *Static rule by intuition* (untested); *dynamic/ML router* (no data, overkill for three steps).
+
+---
+
+### D13 — Progress streams as NDJSON over a POST request
+**Decision:** `/api/generate` streams newline-delimited JSON events when the client sends `Accept: application/x-ndjson`; otherwise it returns one JSON body.
+
+**Why:** Three sequential LLM calls (more with retries or throttling) take several seconds. Per-step progress makes the wait legible and shows the agent chain.
+
+**Rejected:**
+- *Server-Sent Events via `EventSource`* — GET-only, so the idea would go in a query string or a two-step flow.
+- *WebSockets* — Vercel functions don't act as long-lived WebSocket servers.
+- *Polling* — needs a job store and adds latency.
+
+---
+
+### D14 — No semantic search and no vector database
+**Revised 2026-09-15:** replaces "exact vector search, no ANN index".
+
+**Decision:** The gallery is browsed by category. No embeddings, no pgvector, no vector DB.
+
+**Why:**
+- Search isn't part of the core idea → brand → manufacturing flow the project demonstrates.
+- The corpus is hundreds of rows, easily browsed with a filter.
+- Embeddings would consume free-tier quota on every generation and every query.
+- A search feature would need its own query fixture just to justify it.
+
+**Rejected:**
+- *Dedicated vector database* — new infrastructure for hundreds of rows.
+- *pgvector now* — no demonstrated need. If search returns later, it starts as Postgres full-text search and moves to pgvector in the same database only if a fixed query set shows full-text search falling short.
+
+---
+
+### D15 — Server-only database access; RLS on with zero policies
+**Revised 2026-09-15:** access is via `DATABASE_URL` and `pg` (D20), not the Supabase service-role key.
+
+**Decision:** Only route handlers and local scripts touch Postgres. Every table has RLS enabled and no policies.
+
+**Why:** All reads pass through route handlers that apply filters (hidden items, eval content, metadata-only run views). In production the database is hosted on Supabase, which also exposes tables through its Data API with a public anon key; RLS with no policies means that path reads and writes nothing.
+
+**Rejected:** *RLS off* — tables readable and writable through Supabase's Data API with the public anon key.
+
+---
+
+### D16 — Rate limits are counted in Postgres
+**Decision:** Count recent `runs` rows by hashed IP and globally with an indexed query, using the app server's clock for the window (as `booking-app/lib/rateLimit.ts` does). Requests with no identifiable IP share one bucket.
+
+**Why:** Postgres is already there, the rows being counted are written anyway, and demo traffic makes an indexed count cheap. A shared bucket for unknown IPs fails closed.
+
+**Rejected:**
+- *In-memory counters* — per instance, reset on cold starts.
+- *Redis/Upstash* — another service and secret for a demo.
+
+**Accepted trade-off:** concurrent requests can slightly overshoot a limit; the global cap and the project's own quota are the backstop.
+
+---
+
+### D17 — Zod describes shape; guardrail rules describe constraints; prompt version = content hash
+**Revised 2026-09-15:** length and count constraints moved out of the Zod schemas into guardrail rules.
+
+**Decision:**
+- LLM output schemas in Zod describe shape only (fields, types, required). They are converted to JSON Schema for Gemini's structured output and re-validated on every response.
+- Word counts, item counts, and all content constraints are guardrail rules with ids.
+- A prompt's version is the first 12 hex chars of `sha256(system template + user template + JSON schema)`.
+
+**Why:**
+- Gemini's structured output supports only a subset of JSON Schema (e.g. no string length limits), and its docs say to validate values in the application anyway.
+- One mechanism for constraints: every violation has a rule id and a message, which feeds the retry prompt, the UI, and the run log.
+- Content hashes change whenever a prompt or schema changes and only then; manual tags get forgotten.
+
+**Rejected:**
+- *Constraints in both Zod and rules* — two sources of truth, and Zod failures would produce messages that don't match rule ids.
+- *Git SHA as prompt version* — changes on unrelated commits.
+
+---
+
+### D18 — Eval deltas use paired bootstrap confidence intervals
+**Decision:** Compare each metric to the baseline, paired by fixture case, with a 95% bootstrap CI over cases. A change is flagged when the CI excludes 0 **and** the delta meets a minimum effect size.
+
+**Why:** Generation and judging are nondeterministic, n is ~20 cases, and difficulty varies far more between cases than between versions. Pairing removes between-case variance; the bootstrap assumes nothing about bounded 0–1 scores; the minimum effect ignores trivial changes.
+
+**Rejected:** *Raw difference of means* (can't tell noise from change — what the prototype harness did); *unpaired t-test* (ignores pairing, shaky normality at n=20).
+
+---
+
+### D19 — A guardrail rejection is HTTP 200 with `status: "rejected"`
+**Decision:** Well-formed requests whose generation is rejected by guardrails return 200 with `status: "rejected"`. 4xx is for caller mistakes, 5xx for system failures.
+
+**Why:** Rejection is an outcome of a valid request, not an error. With streaming, the status line is sent before the outcome is known anyway.
+
+**Rejected:** *422 for rejections* — can't be sent once a stream has started, and conflates bad input with an output that failed a rule.
+
+---
+
+### D20 — `pg` (node-postgres) against plain Postgres
+**Added 2026-09-15.**
+
+**Decision:** The app talks to Postgres with `pg` and parameterized SQL. Locally: one Docker `postgres:16-alpine` container on port 5434. Production: Supabase-hosted Postgres through its connection pooler (migrations over a direct connection). Migrations are ordered SQL files applied by a small script.
+
+**Why:**
+- Real transactions in TypeScript: a run's steps, brand, product, and final status are written atomically without moving logic into database functions.
+- One small container locally (the Supabase CLI stack is several GB on a nearly full disk).
+- The same pattern as `booking-app`, so the codebase reads consistently across projects.
+
+**Rejected:**
+- *supabase-js* — HTTP API without multi-statement transactions; atomic writes would need plpgsql RPC functions.
+- *Supabase CLI local stack* — many containers for features this app doesn't use.
+- *Prisma* — the schema is jsonb- and array-heavy and the queries are few; a generated client adds more than it saves.
+- *A migration library (node-pg-migrate, dbmate)* — a dependency for ordering and recording a handful of plain SQL files.
+
+---
+
+### D21 — Two retry layers: transport and quality
+**Added 2026-09-15.**
+
+**Decision:**
+- **Transport layer** (Gemini adapter): retries HTTP 408/429/500/502/503/504 and per-call timeouts with exponential backoff and full jitter, honors the server's suggested retry delay, and never starts a retry that couldn't finish before the run deadline. Exhausted daily quota is not retried. The SDK's built-in retry is disabled.
+- **Quality layer** (service, D11): one retry for content failures, with feedback.
+- Every transport retry is recorded on its step, and runs that were throttled are reported separately in latency metrics.
+
+**Why:** On the free tier, throttling is normal, not exceptional. Keeping the layers separate keeps each simple and makes both measurable.
+
+**Rejected:**
+- *SDK default retry* — up to 5 attempts with delays up to 60 s, invisible to the run log and unaware of the deadline.
+- *No transport retry* — ordinary per-minute throttling would reject otherwise-good runs.
+- *Retrying daily-quota exhaustion* — it won't clear until the quota resets; the honest answer is a clear notice.
+
+---
+
+### D22 — Moderation uses Gemini's safety feedback, not a separate call
+**Added 2026-09-15.**
+
+**Decision:** If Gemini blocks the prompt (`promptFeedback.blockReason`), the run is rejected with `input.safety`. If a response is stopped for safety, the attempt fails with `output.safety` and gets the quality retry. A banned-word check on the idea runs before any call.
+
+**Why:** A dedicated moderation request per run would spend quota and latency on something the generation call already reports.
+
+**Rejected:** *A separate moderation/classification call* — one extra request per run on a quota budget.
+
+---
+
+### D23 — Layered code with lint-enforced boundaries
+**Added 2026-09-15.**
+
+**Decision:**
+| Layer | Path | Rule |
+|---|---|---|
+| Contracts | `lib/contracts` | Zod request/response/event types shared by server and browser |
+| Domain | `lib/domain` | Pure: no I/O, no framework, no database or SDK imports |
+| Services | `lib/services` | Orchestration against small ports (`LlmClient`, `GenerationStore`, `Clock`) |
+| Adapters | `lib/adapters` | Gemini, Postgres, env |
+| Delivery | `app/`, `components/`, `lib/client` | Route handlers map HTTP to services; UI imports contracts only |
+
+ESLint `no-restricted-imports` enforces the domain, contracts, and services rules. Agents are data (`{ step, schema, prompt, evaluate }`) run by one generic step runner.
+
+**Why:** The guardrails, name selection, and result building — the logic worth trusting — are testable without mocks. The only interfaces are at real seams (the LLM, the store, the clock), so tests swap in fakes where it matters.
+
+**Rejected:**
+- *Everything in route handlers* — untestable without HTTP and a database.
+- *Repository interface per table, DI container, agent class hierarchy* — ceremony for a codebase this size; it makes the code harder to read, not easier.
+
+---
+
+### D24 — No LangChain
+**Added 2026-09-15.**
+
+**Decision:** Agents call the Gemini SDK through the `LlmClient` port. No orchestration framework.
+
+**Why:** The chain is three sequential structured calls with custom validation and retry semantics (D11, D21). A framework would wrap those in its own abstractions without removing any of the code.
+
+**Rejected:** *LangChain for one agent step* — added only as a résumé keyword, which conflicts with the clean-code goal.
+
+---
+
+## Open items — need a human
+1. **Quota numbers.** Read the project's requests-per-minute and requests-per-day for both models on the AI Studio rate-limit page, then set `GLOBAL_DAILY_GENERATION_CAP` ≤ RPD ÷ 6 (worst case: 3 steps × 2 attempts).
+2. **Feasibility numbers.** Seed values are labelled illustrative but need a plausibility pass.
+3. **Word lists.** Banned words, regulated claims, famous brands, and material vocabulary are starter lists and need curating.
+4. **Visual design.** No mocks exist; the docs specify UI states and content, not layout or styling.

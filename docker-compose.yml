@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: brandforge
+      POSTGRES_PASSWORD: brandforge
+      POSTGRES_DB: brandforge
+    ports:
+      # Host port 5434 — 5432 is this machine's system Postgres 12, 5433 is booking-app's.
+      - "5434:5432"
+    volumes:
+      - brandforge-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brandforge -d brandforge"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  brandforge-db-data:
