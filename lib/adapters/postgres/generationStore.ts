@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from "pg";
 import type {
   FeasibilityOption,
   FinishedRun,
+  FinishedRunIds,
   GenerationStore,
   NameCandidateRecord,
   NewRun,
@@ -104,10 +105,9 @@ export function createPostgresGenerationStore(pool: Pool): GenerationStore {
         await client.query("begin");
         await updateRun(client, record);
         await insertRunSteps(client, record.runId, record.steps);
-        if (record.status === "succeeded") {
-          await insertBrandAndProduct(client, record.runId, record);
-        }
+        const ids = record.status === "succeeded" ? await insertBrandAndProduct(client, record.runId, record) : undefined;
         await client.query("commit");
+        return ids;
       } catch (error) {
         await client.query("rollback");
         throw error;
@@ -184,7 +184,7 @@ async function insertBrandAndProduct(
   client: PoolClient,
   runId: string,
   record: Extract<FinishedRun, { status: "succeeded" }>,
-): Promise<void> {
+): Promise<FinishedRunIds> {
   const { content } = record;
 
   // `source`, `category`, `feasibility_option_id`, and `idea` all come from the `runs` row
@@ -198,11 +198,14 @@ async function insertBrandAndProduct(
   );
   const brandId = brandRows[0].id;
 
-  await client.query(
+  const { rows: productRows } = await client.query<{ id: string }>(
     `insert into products
        (brand_id, run_id, category, feasibility_option_id, feasibility_snapshot, idea, tagline, description, packaging, source, hidden)
      select $2, $1, category, feasibility_option_id, $3::jsonb, idea, $4, $5, $6::jsonb, source, false
-     from runs where id = $1`,
+     from runs where id = $1
+     returning id`,
     [runId, brandId, toJsonb(content.feasibilitySnapshot), content.tagline, content.description, toJsonb(content.packaging)],
   );
+
+  return { brandId, productId: productRows[0].id };
 }

@@ -144,7 +144,7 @@ describe("createPostgresGenerationStore", () => {
         steps: [stepRecord()],
       };
 
-      await store.finishRun(record);
+      const ids = await store.finishRun(record);
 
       const { rows: runRows } = await testPool.query("select status, finished_at from runs where id = $1", [runId]);
       expect(runRows[0].status).toBe("succeeded");
@@ -155,7 +155,7 @@ describe("createPostgresGenerationStore", () => {
       expect(stepRows[0]).toMatchObject({ step: "naming", attempt: 1 });
 
       const { rows: productRows } = await testPool.query(
-        "select tagline, category, idea, feasibility_option_id, source from products where run_id = $1",
+        "select id, tagline, category, idea, feasibility_option_id, source from products where run_id = $1",
         [runId],
       );
       expect(productRows).toHaveLength(1);
@@ -167,8 +167,10 @@ describe("createPostgresGenerationStore", () => {
         source: "user",
       });
 
-      const { rows: brandRows } = await testPool.query("select name, source from brands");
-      expect(brandRows).toEqual([{ name: "Ridge", source: "user" }]);
+      const { rows: brandRows } = await testPool.query("select id, name, source from brands");
+      expect(brandRows).toEqual([{ id: ids?.brandId, name: "Ridge", source: "user" }]);
+      // The route handler (build step 7) needs these back to shape GenerateResult.brand/product.
+      expect(ids).toEqual({ brandId: brandRows[0].id, productId: productRows[0].id });
     });
 
     it("persists a rejected run's failure with no brand or product", async () => {
@@ -185,7 +187,8 @@ describe("createPostgresGenerationStore", () => {
         steps: [stepRecord(), stepRecord({ attempt: 2 })],
       };
 
-      await store.finishRun(record);
+      const ids = await store.finishRun(record);
+      expect(ids).toBeUndefined();
 
       const { rows } = await testPool.query<{ status: string; failure: unknown }>("select status, failure from runs where id = $1", [
         runId,

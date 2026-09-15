@@ -14,6 +14,7 @@ import { resolveModel } from "@/config/routing";
 import type {
   Clock,
   ErrorFailure,
+  FinishedRunIds,
   GenerationStore,
   LlmClient,
   LlmOutcome,
@@ -64,9 +65,24 @@ export interface RunErrorOutcome {
   qualityRetries: number;
 }
 
+// Everything TRD.md §8's GenerateResult.meta needs that GenerationOutcome (domain, no notion of
+// models/prompt hashes/timing) doesn't carry — the route handler shapes this straight into
+// `meta` without recomputing it from `steps`, which stays store-only (RunStepRecord.rawOutput
+// is never exposed via the API).
+export interface RunMeta {
+  models: Partial<Record<StepName, string>>;
+  promptVersions: Partial<Record<StepName, string>>;
+  latencyMs: number;
+  transportRetries: number;
+  usage: TokenUsage;
+}
+
 export interface RunResult {
   runId: string;
   outcome: GenerationOutcome | RunErrorOutcome;
+  meta: RunMeta;
+  // Only a succeeded run creates a brand/product row (GenerationStore.finishRun).
+  ids?: FinishedRunIds;
 }
 
 export async function runGeneration(
@@ -201,7 +217,8 @@ export async function runGeneration(
     qualityRetries,
   });
 
-  await deps.store.finishRun({
+  const latencyMs = clock.now() - startedAt;
+  const ids = await deps.store.finishRun({
     runId,
     status: "succeeded",
     content: {
@@ -217,11 +234,22 @@ export async function runGeneration(
     usage: sumUsage(records),
     qualityRetries,
     transportRetries: sumTransportRetries(records),
-    latencyMs: clock.now() - startedAt,
+    latencyMs,
     steps: records,
   });
 
-  return { runId, outcome };
+  return {
+    runId,
+    outcome,
+    ids,
+    meta: {
+      models: modelsByStep(records),
+      promptVersions,
+      latencyMs,
+      transportRetries: sumTransportRetries(records),
+      usage: sumUsage(records),
+    },
+  };
 }
 
 // --- generic per-step execution --------------------------------------------------------
@@ -402,6 +430,7 @@ async function finish(
   const latencyMs = clock.now() - startedAt;
   const usage = sumUsage(records);
   const transportRetries = sumTransportRetries(records);
+  const meta: RunMeta = { models: modelsByStep(records), promptVersions, latencyMs, transportRetries, usage };
 
   if (result.status === "error") {
     await store.finishRun({
@@ -418,6 +447,7 @@ async function finish(
     });
     return {
       runId,
+      meta,
       outcome: { status: "error", step: result.failure.step, error: result.failure.error, message: result.failure.message, qualityRetries },
     };
   }
@@ -440,7 +470,17 @@ async function finish(
     latencyMs,
     steps: records,
   });
-  return { runId, outcome };
+  return { runId, outcome, meta };
+}
+
+// A step's retry attempts (up to 2) always share one model — resolved once per step in
+// stepCtx — so the first record for a step is enough to know which model the step used.
+function modelsByStep(records: RunStepRecord[]): Partial<Record<StepName, string>> {
+  const models: Partial<Record<StepName, string>> = {};
+  for (const record of records) {
+    models[record.step] ??= record.model;
+  }
+  return models;
 }
 
 // Quality retries beyond the first attempt for this step. A step can end with zero records at

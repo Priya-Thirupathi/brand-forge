@@ -151,9 +151,17 @@ export type FinishedRun =
   | (FinishedRunBase & { status: "rejected"; failure: RejectedFailure })
   | (FinishedRunBase & { status: "error"; failure: ErrorFailure });
 
+// The ids a succeeded run's insert produced (TRD.md §8 GenerateResult.brand.id/product.id) —
+// the route handler needs them to shape the API response, but a rejected/errored run creates
+// neither row, so callers must check `status` before expecting this back.
+export interface FinishedRunIds {
+  brandId: string;
+  productId: string;
+}
+
 export interface GenerationStore {
   findOption(category: string, optionId?: string): Promise<FeasibilityOption | null>;
   countRuns(filter: { ipHash?: string; since: Date }): Promise<number>;
   startRun(run: NewRun): Promise<string>;
-  finishRun(record: FinishedRun): Promise<void>; // one transaction
+  finishRun(record: FinishedRun): Promise<FinishedRunIds | undefined>; // one transaction
 }

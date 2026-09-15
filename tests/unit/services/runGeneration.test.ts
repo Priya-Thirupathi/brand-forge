@@ -112,6 +112,7 @@ function createInMemoryStore(): { store: GenerationStore; finishedRuns: Map<stri
     },
     async finishRun(record) {
       finishedRuns.set(record.runId, record);
+      return record.status === "succeeded" ? { brandId: "brand-1", productId: "product-1" } : undefined;
     },
   };
   return { store, finishedRuns };
@@ -163,6 +164,14 @@ describe("runGeneration", () => {
       expect(finished.content.feasibilitySnapshot).toEqual(option);
     }
     expect(finished?.nameCandidates?.map((c) => c.name)).toEqual(["Wagwell", "Barkline", "Pet Treats"]);
+    expect(result.ids).toEqual({ brandId: "brand-1", productId: "product-1" });
+    expect(result.meta.models).toEqual({
+      naming: expect.any(String),
+      tagline_description: expect.any(String),
+      packaging: expect.any(String),
+    });
+    expect(Object.keys(result.meta.promptVersions)).toEqual(["naming", "tagline_description", "packaging"]);
+    expect(result.meta.transportRetries).toBe(0);
   });
 
   it("carries the naming candidates into a persisted rejection from a later step", async () => {

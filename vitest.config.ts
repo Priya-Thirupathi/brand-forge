@@ -13,7 +13,11 @@ export default defineConfig({
   test: {
     projects: [
       { extends: true, test: { name: "unit", include: ["tests/unit/**/*.test.ts"] } },
-      { extends: true, test: { name: "integration", include: ["tests/integration/**/*.test.ts"] } },
+      // Every integration file shares one real Postgres database and truncates it in
+      // `beforeEach` — running files in parallel workers races them against each other
+      // (duplicate-key and missing-row failures that have nothing to do with the code under
+      // test), so this project runs its files sequentially.
+      { extends: true, test: { name: "integration", include: ["tests/integration/**/*.test.ts"], fileParallelism: false } },
     ],
   },
 });
