@@ -107,7 +107,6 @@ export async function runGeneration(
     onEvent: options.onEvent,
   });
 
-  promptVersions.naming = namingAgent.promptVersion;
   const naming = await runAgentStep(
     namingAgent,
     { idea: input.idea, category: input.category, option: input.option },
@@ -115,6 +114,9 @@ export async function runGeneration(
   );
   records.push(...naming.records);
   qualityRetries += extraAttempts(naming.records);
+  // Only recorded once the step actually made at least one call — a deadline pre-check can
+  // stop it before that, and an unattempted step shouldn't claim a prompt version was used.
+  if (naming.records.length > 0) promptVersions.naming = namingAgent.promptVersion;
   if (naming.kind !== "accepted") {
     return finish(
       deps.store,
@@ -131,7 +133,6 @@ export async function runGeneration(
 
   const brandName = naming.accepted.selectedName;
 
-  promptVersions.tagline_description = taglineDescriptionAgent.promptVersion;
   const tagline = await runAgentStep(
     taglineDescriptionAgent,
     { idea: input.idea, category: input.category, option: input.option, brandName },
@@ -139,6 +140,7 @@ export async function runGeneration(
   );
   records.push(...tagline.records);
   qualityRetries += extraAttempts(tagline.records);
+  if (tagline.records.length > 0) promptVersions.tagline_description = taglineDescriptionAgent.promptVersion;
   if (tagline.kind !== "accepted") {
     return finish(
       deps.store,
@@ -153,7 +155,6 @@ export async function runGeneration(
     );
   }
 
-  promptVersions.packaging = packagingAgent.promptVersion;
   const packaging = await runAgentStep(
     packagingAgent,
     {
@@ -169,6 +170,7 @@ export async function runGeneration(
   );
   records.push(...packaging.records);
   qualityRetries += extraAttempts(packaging.records);
+  if (packaging.records.length > 0) promptVersions.packaging = packagingAgent.promptVersion;
   if (packaging.kind !== "accepted") {
     return finish(
       deps.store,
@@ -234,21 +236,26 @@ async function runAgentStep<Input, Output, Accepted>(
   input: Input,
   ctx: StepContext,
 ): Promise<StepOutcome<Accepted>> {
-  if (ctx.clock.now() >= ctx.deadlineAt) {
-    return {
-      kind: "transport_failed",
-      error: "timeout",
-      message: `run deadline exceeded before the ${spec.step} step started`,
-      records: [],
-    };
-  }
-
-  ctx.onEvent?.({ type: "step_started", step: spec.step });
   const jsonSchema = z.toJSONSchema(spec.outputSchema);
   const records: RunStepRecord[] = [];
   let previousViolations: Violation[] = [];
 
   for (let attempt: 1 | 2 = 1; ; ) {
+    // Checked before every attempt, not just the step's first — a same-step quality retry is
+    // just as much "starting something new" as moving to the next step is, and shouldn't get
+    // an unchecked fresh ~10s call budget once the run deadline has already passed.
+    if (ctx.clock.now() >= ctx.deadlineAt) {
+      return {
+        kind: "transport_failed",
+        error: "timeout",
+        message: `run deadline exceeded before ${spec.step} attempt ${attempt}`,
+        records,
+      };
+    }
+    if (attempt === 1) {
+      ctx.onEvent?.({ type: "step_started", step: spec.step });
+    }
+
     const variables = spec.toVariables(input);
     const system = renderTemplate(spec.prompt.system, { ...variables, retry_feedback: renderRetryFeedback(previousViolations) });
     const user = renderTemplate(spec.prompt.user, variables);

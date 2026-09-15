@@ -257,9 +257,9 @@ describe("runGeneration", () => {
 
   it("ends the run as a timeout error once the run deadline passes before a later step starts", async () => {
     const { client, systemPrompts } = createScriptedLlmClient([okOutcome(validNamingJson)]);
-    const { store } = createInMemoryStore();
-    // Calls, in order: startedAt, naming's pre-step deadline check (still within budget),
-    // tagline_description's pre-step deadline check (past the 25s deadline), finish()'s
+    const { store, finishedRuns } = createInMemoryStore();
+    // Calls, in order: startedAt, naming's pre-attempt deadline check (still within budget),
+    // tagline_description's pre-attempt deadline check (past the 25s deadline), finish()'s
     // latency calculation.
     const clock = createSteppedClock([0, 100, 30_000, 30_000]);
 
@@ -274,6 +274,34 @@ describe("runGeneration", () => {
       expect(result.outcome.qualityRetries).toBe(0);
     }
     expect(systemPrompts).toHaveLength(1); // packaging never called either
+
+    // naming actually ran (one real call), so its prompt version is legitimately known; the
+    // deadline stopped tagline_description before it made any call, so it shouldn't claim one.
+    const promptVersions = finishedRuns.get(result.runId)?.promptVersions;
+    expect(promptVersions).toHaveProperty("naming");
+    expect(promptVersions).not.toHaveProperty("tagline_description");
+  });
+
+  it("checks the run deadline again before a same-step quality retry, not just before the step starts", async () => {
+    const tooFewCandidates = { candidates: [{ name: "Wagwell", rationale: "r" }] }; // name.count violation
+    const { client, systemPrompts } = createScriptedLlmClient([okOutcome(tooFewCandidates)]);
+    const { store } = createInMemoryStore();
+    // Calls, in order: startedAt, naming attempt 1's pre-attempt deadline check (within
+    // budget), naming attempt 2's pre-attempt deadline check (past the deadline — attempt 2
+    // must never be requested), finish()'s latency calculation.
+    const clock = createSteppedClock([0, 100, 30_000, 30_000]);
+
+    const result = await runGeneration(baseInput(), { llmClient: client, store, clock });
+
+    expect(result.outcome.status).toBe("error");
+    if (result.outcome.status === "error") {
+      expect(result.outcome.step).toBe("naming");
+      expect(result.outcome.error).toBe("timeout");
+      // Attempt 1 happened and failed on content; attempt 2 never started, so it's zero
+      // completed retries, not one.
+      expect(result.outcome.qualityRetries).toBe(0);
+    }
+    expect(systemPrompts).toHaveLength(1); // the would-be quality retry was never requested
   });
 
   it("passes the caller's abort signal through to the LLM client on every call", async () => {
