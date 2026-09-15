@@ -156,7 +156,36 @@ describe("runGeneration", () => {
       "step_started",
       "step_finished",
     ]);
-    expect(finishedRuns.get(result.runId)?.status).toBe("succeeded");
+    const finished = finishedRuns.get(result.runId);
+    expect(finished?.status).toBe("succeeded");
+    if (finished?.status === "succeeded") {
+      expect(finished.content).toMatchObject({ brandName: "Wagwell", tagline: validTaglineJson.tagline });
+      expect(finished.content.feasibilitySnapshot).toEqual(option);
+    }
+    expect(finished?.nameCandidates?.map((c) => c.name)).toEqual(["Wagwell", "Barkline", "Pet Treats"]);
+  });
+
+  it("carries the naming candidates into a persisted rejection from a later step", async () => {
+    const tooFewCallouts = { ...validPackagingJson, callouts: [] }; // packaging.callouts violation, both attempts
+    const { client } = createScriptedLlmClient([
+      okOutcome(validNamingJson),
+      okOutcome(validTaglineJson),
+      okOutcome(tooFewCallouts),
+      okOutcome(tooFewCallouts),
+    ]);
+    const { store, finishedRuns } = createInMemoryStore();
+
+    const result = await runGeneration(baseInput(), { llmClient: client, store });
+
+    expect(result.outcome.status).toBe("rejected");
+    const finished = finishedRuns.get(result.runId);
+    expect(finished?.status).toBe("rejected");
+    if (finished?.status === "rejected") {
+      expect(finished.failure.step).toBe("packaging");
+    }
+    // Naming actually succeeded before packaging failed — its candidates are still worth
+    // persisting for /api/runs debugging, not just discarded because the run didn't succeed.
+    expect(finished?.nameCandidates?.map((c) => c.name)).toEqual(["Wagwell", "Barkline", "Pet Treats"]);
   });
 
   it("retries a content failure once, including the failed rules in the retry prompt, and can still succeed", async () => {

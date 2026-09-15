@@ -13,9 +13,12 @@ import { buildRejectedOutcome, buildSucceededOutcome, type GenerationOutcome } f
 import { resolveModel } from "@/config/routing";
 import type {
   Clock,
+  ErrorFailure,
   GenerationStore,
   LlmClient,
   LlmOutcome,
+  NameCandidateRecord,
+  RejectedFailure,
   RunStepRecord,
   TokenUsage,
   TransportFailureReason,
@@ -91,10 +94,9 @@ export async function runGeneration(
   // input.banned_word (TRD.md §7) — checked once, before any generation call is spent on it.
   const bannedWordViolations = checkBannedWordInIdea(input.idea);
   if (bannedWordViolations.length > 0) {
-    return finish(deps.store, clock, startedAt, runId, input.option, qualityRetries, records, promptVersions, {
+    return finish(deps.store, clock, startedAt, runId, input.option, qualityRetries, records, promptVersions, undefined, {
       status: "rejected",
-      step: "input",
-      violations: bannedWordViolations,
+      failure: { step: "input", violations: bannedWordViolations },
     });
   }
 
@@ -127,6 +129,7 @@ export async function runGeneration(
       qualityRetries,
       records,
       promptVersions,
+      undefined,
       toFinishResult("naming", naming),
     );
   }
@@ -151,6 +154,7 @@ export async function runGeneration(
       qualityRetries,
       records,
       promptVersions,
+      naming.accepted.candidates,
       toFinishResult("tagline_description", tagline),
     );
   }
@@ -181,6 +185,7 @@ export async function runGeneration(
       qualityRetries,
       records,
       promptVersions,
+      naming.accepted.candidates,
       toFinishResult("packaging", packaging),
     );
   }
@@ -199,6 +204,14 @@ export async function runGeneration(
   await deps.store.finishRun({
     runId,
     status: "succeeded",
+    content: {
+      brandName,
+      toneNotes: tagline.accepted.tone_notes,
+      tagline: tagline.accepted.tagline,
+      description: tagline.accepted.description,
+      packaging: packaging.accepted,
+      feasibilitySnapshot: input.option,
+    },
     nameCandidates: naming.accepted.candidates,
     promptVersions,
     usage: sumUsage(records),
@@ -362,18 +375,16 @@ function toRunStepRecord(
 
 // --- persisting a run that didn't succeed -----------------------------------------------
 
-type FinishResult =
-  | { status: "rejected"; step: StepName | "input"; violations: Violation[] }
-  | { status: "error"; step: StepName; error: TransportFailureReason; message: string };
+type FinishResult = { status: "rejected"; failure: RejectedFailure } | { status: "error"; failure: ErrorFailure };
 
 function toFinishResult<Accepted>(step: StepName, outcome: Exclude<StepOutcome<Accepted>, { kind: "accepted" }>): FinishResult {
   if (outcome.kind === "transport_failed") {
-    return { status: "error", step, error: outcome.error, message: outcome.message };
+    return { status: "error", failure: { step, error: outcome.error, message: outcome.message } };
   }
   if (outcome.kind === "input_blocked") {
-    return { status: "rejected", step: "input", violations: outcome.violations };
+    return { status: "rejected", failure: { step: "input", violations: outcome.violations } };
   }
-  return { status: "rejected", step, violations: outcome.violations };
+  return { status: "rejected", failure: { step, violations: outcome.violations } };
 }
 
 async function finish(
@@ -385,6 +396,7 @@ async function finish(
   qualityRetries: number,
   records: RunStepRecord[],
   promptVersions: Partial<Record<StepName, string>>,
+  nameCandidates: NameCandidateRecord[] | undefined,
   result: FinishResult,
 ): Promise<RunResult> {
   const latencyMs = clock.now() - startedAt;
@@ -395,7 +407,8 @@ async function finish(
     await store.finishRun({
       runId,
       status: "error",
-      failure: { step: result.step, error: result.error, message: result.message },
+      failure: result.failure,
+      nameCandidates,
       promptVersions,
       usage,
       qualityRetries,
@@ -403,14 +416,23 @@ async function finish(
       latencyMs,
       steps: records,
     });
-    return { runId, outcome: { status: "error", step: result.step, error: result.error, message: result.message, qualityRetries } };
+    return {
+      runId,
+      outcome: { status: "error", step: result.failure.step, error: result.failure.error, message: result.failure.message, qualityRetries },
+    };
   }
 
-  const outcome = buildRejectedOutcome({ feasibilityOption: option, qualityRetries, step: result.step, violations: result.violations });
+  const outcome = buildRejectedOutcome({
+    feasibilityOption: option,
+    qualityRetries,
+    step: result.failure.step,
+    violations: result.failure.violations,
+  });
   await store.finishRun({
     runId,
     status: "rejected",
-    failure: { step: result.step, violations: result.violations },
+    failure: result.failure,
+    nameCandidates,
     promptVersions,
     usage,
     qualityRetries,

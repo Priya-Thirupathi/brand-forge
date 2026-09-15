@@ -4,6 +4,7 @@
 
 import type { StepName } from "@/lib/contracts/stepName";
 import type { Violation } from "@/lib/contracts/violation";
+import type { FeasibilityOptionFacts } from "@/lib/domain/types";
 
 export interface Clock {
   now(): number;
@@ -92,17 +93,46 @@ export interface RunStepRecord {
   error?: TransportFailureReason;
 }
 
-export type RunFailure =
-  | { step: StepName | "input"; violations: Violation[] }
-  | { step: StepName; error: TransportFailureReason; message: string };
+export interface RejectedFailure {
+  step: StepName | "input";
+  violations: Violation[];
+}
 
-export interface FinishedRun {
+export interface ErrorFailure {
+  step: StepName;
+  error: TransportFailureReason;
+  message: string;
+}
+
+export type RunFailure = RejectedFailure | ErrorFailure;
+
+export interface NameCandidateRecord {
+  name: string;
+  rationale: string;
+  passed: boolean;
+  violations: Violation[];
+}
+
+// What actually gets persisted to `brands`/`products` (TRD.md §4) on a succeeded run — the
+// service layer has this from lib/domain/result.ts's SucceededGeneration; a rejected or
+// errored run never reaches this shape, since content only reaches storage once accepted.
+export interface SucceededRunContent {
+  brandName: string;
+  toneNotes: { voice: string[]; audience: string; personality: string; avoid: string[] };
+  tagline: string;
+  description: string;
+  packaging: { headline: string; body: string; callouts: string[] };
+  // The option's facts as they were at generation time (products.feasibility_snapshot) — a
+  // snapshot, independent of whatever the feasibility_options row says later.
+  feasibilitySnapshot: FeasibilityOptionFacts;
+}
+
+interface FinishedRunBase {
   runId: string;
-  status: "succeeded" | "rejected" | "error";
-  failure?: RunFailure;
   // Only passing candidates' names reach the client (TRD.md §5 "Name selection"), but the
   // stored record keeps every candidate — rejected ones included — for `/api/runs` debugging.
-  nameCandidates?: Array<{ name: string; rationale: string; passed: boolean; violations: Violation[] }>;
+  // Present whenever the naming step ran at all, regardless of how the run ultimately finished.
+  nameCandidates?: NameCandidateRecord[];
   promptVersions: Partial<Record<StepName, string>>;
   usage: TokenUsage;
   qualityRetries: number;
@@ -111,6 +141,15 @@ export interface FinishedRun {
   firstEventMs?: number;
   steps: RunStepRecord[];
 }
+
+// A discriminated union, not a loose `status` + optional `failure`/`content` bag: it's
+// impossible to construct a "succeeded" record with no content, or a "rejected" one with the
+// wrong failure shape — the compiler enforces what TRD.md §4's `runs` columns require per
+// status, rather than leaving it to a runtime check.
+export type FinishedRun =
+  | (FinishedRunBase & { status: "succeeded"; content: SucceededRunContent })
+  | (FinishedRunBase & { status: "rejected"; failure: RejectedFailure })
+  | (FinishedRunBase & { status: "error"; failure: ErrorFailure });
 
 export interface GenerationStore {
   findOption(category: string, optionId?: string): Promise<FeasibilityOption | null>;
