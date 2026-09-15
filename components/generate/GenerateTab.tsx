@@ -20,7 +20,7 @@ export function GenerateTab() {
       {running && <StepProgress steps={state.steps} />}
 
       {state.status === "admission_error" && <QuotaNotice message={state.message} retryAfterS={state.retryAfterS} />}
-      {state.status === "run_error" && <QuotaNotice message={state.message} />}
+      {state.status === "run_error" && <QuotaNotice message={state.message} code={state.code} />}
 
       {(state.status === "succeeded" || state.status === "rejected") && (
         <div className="flex flex-col gap-4">
