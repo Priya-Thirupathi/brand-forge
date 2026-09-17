@@ -23,6 +23,9 @@ export const RunSummarySchema = z.object({
     ])
     .optional(),
   models: z.partialRecord(StepNameSchema, z.string()),
+  // Set when this run retried a prior `error` run without redoing its already-succeeded steps
+  // (lib/adapters/postgres/resume.ts) — a debugging aid for /api/runs, not exposed elsewhere.
+  resumed_from_run_id: z.string().nullable(),
   quality_retries: z.number(),
   transport_retries: z.number(),
   latency_ms: z.number().nullable(),

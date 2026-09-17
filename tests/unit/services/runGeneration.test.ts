@@ -342,6 +342,62 @@ describe("runGeneration", () => {
     expect(systemPrompts).toHaveLength(1); // the would-be quality retry was never requested
   });
 
+  it("resume: skips naming entirely when a prior accepted naming output is supplied", async () => {
+    const { client, systemPrompts } = createScriptedLlmClient([okOutcome(validTaglineJson), okOutcome(validPackagingJson)]);
+    const { store, finishedRuns } = createInMemoryStore();
+    const resumedNaming = { selectedName: "Wagwell", candidates: [{ name: "Wagwell", rationale: "r", passed: true, violations: [] }] };
+
+    const result = await runGeneration(
+      baseInput({ resumedFromRunId: "run-failed-1", resume: { naming: resumedNaming } }),
+      { llmClient: client, store },
+    );
+
+    expect(result.outcome.status).toBe("succeeded");
+    if (result.outcome.status === "succeeded") {
+      expect(result.outcome.brandName).toBe("Wagwell");
+    }
+    expect(systemPrompts).toHaveLength(2); // tagline_description + packaging only, no naming call
+    // No naming record was made this run, so it shouldn't claim a prompt version for this run.
+    expect(Object.keys(result.meta.promptVersions)).toEqual(["tagline_description", "packaging"]);
+    expect(finishedRuns.get(result.runId)?.nameCandidates?.map((c) => c.name)).toEqual(["Wagwell"]);
+  });
+
+  it("resume: skips both naming and tagline_description when both are supplied, retrying only packaging", async () => {
+    const { client, systemPrompts } = createScriptedLlmClient([okOutcome(validPackagingJson)]);
+    const { store } = createInMemoryStore();
+    const resumedNaming = { selectedName: "Wagwell", candidates: [{ name: "Wagwell", rationale: "r", passed: true, violations: [] }] };
+
+    const result = await runGeneration(
+      baseInput({
+        resumedFromRunId: "run-failed-2",
+        resume: { naming: resumedNaming, taglineDescription: validTaglineJson },
+      }),
+      { llmClient: client, store },
+    );
+
+    expect(result.outcome.status).toBe("succeeded");
+    expect(systemPrompts).toHaveLength(1); // packaging only
+  });
+
+  it("resume: a fresh transport failure on the retried step still ends the run as error", async () => {
+    const { client } = createScriptedLlmClient([failedOutcome("provider_error", "still 503")]);
+    const { store, finishedRuns } = createInMemoryStore();
+    const resumedNaming = { selectedName: "Wagwell", candidates: [{ name: "Wagwell", rationale: "r", passed: true, violations: [] }] };
+
+    const result = await runGeneration(
+      baseInput({ resumedFromRunId: "run-failed-3", resume: { naming: resumedNaming } }),
+      { llmClient: client, store },
+    );
+
+    expect(result.outcome.status).toBe("error");
+    if (result.outcome.status === "error") {
+      expect(result.outcome.step).toBe("tagline_description");
+    }
+    // The resumed run's own naming candidates still carry through, even though naming wasn't
+    // re-run this time — a resumed-and-failed-again run is just as debuggable as a fresh one.
+    expect(finishedRuns.get(result.runId)?.nameCandidates?.map((c) => c.name)).toEqual(["Wagwell"]);
+  });
+
   it("passes the caller's abort signal through to the LLM client on every call", async () => {
     const controller = new AbortController();
     let sawSignal: AbortSignal | undefined;

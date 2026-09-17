@@ -27,6 +27,7 @@ export function RunsTable({ runs }: { runs: RunSummary[] }) {
           <th className="py-1.5 pr-4 font-medium">Created</th>
           <th className="py-1.5 pr-4 font-medium">Status</th>
           <th className="py-1.5 pr-4 font-medium">Category</th>
+          <th className="py-1.5 pr-4 font-medium">Resumed from</th>
           <th className="py-1.5 pr-4 font-medium">Failure</th>
           <th className="py-1.5 pr-4 font-medium">Quality retries</th>
           <th className="py-1.5 pr-4 font-medium">Transport retries</th>
@@ -41,6 +42,7 @@ export function RunsTable({ runs }: { runs: RunSummary[] }) {
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[run.status]}`}>{run.status}</span>
             </td>
             <td className="py-1.5 pr-4">{run.category}</td>
+            <td className="py-1.5 pr-4 font-mono text-xs">{run.resumed_from_run_id ? run.resumed_from_run_id.slice(0, 8) : "—"}</td>
             <td className="py-1.5 pr-4">{formatFailure(run.failure)}</td>
             <td className="py-1.5 pr-4">{run.quality_retries}</td>
             <td className="py-1.5 pr-4">{run.transport_retries}</td>

@@ -2,7 +2,8 @@
 
 import { useCallback, useReducer, useRef } from "react";
 import type { GenerateRequest } from "@/lib/contracts/generate";
-import { generationReducer, initialGenerationState } from "./generationReducer";
+import type { StepName } from "@/lib/contracts/stepName";
+import { generationReducer, initialGenerationState, STEP_NAMES } from "./generationReducer";
 import { readNdjsonEvents } from "./ndjsonReader";
 
 // Wires the pure generationReducer to a real POST /api/generate call. Kept separate from the
@@ -10,12 +11,16 @@ import { readNdjsonEvents } from "./ndjsonReader";
 export function useGeneration() {
   const [state, dispatch] = useReducer(generationReducer, initialGenerationState);
   const controllerRef = useRef<AbortController | null>(null);
+  // Remembered so `resume()` can resubmit the same idea/category/option without the caller
+  // having to hold onto it — only ever read back inside this hook.
+  const lastRequestRef = useRef<GenerateRequest | null>(null);
 
-  const generate = useCallback(async (request: GenerateRequest) => {
+  const submit = useCallback(async (request: GenerateRequest, resumedSteps?: StepName[]) => {
     controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
-    dispatch({ type: "submit" });
+    lastRequestRef.current = request;
+    dispatch({ type: "submit", resumedSteps });
 
     try {
       const response = await fetch("/api/generate", {
@@ -40,10 +45,28 @@ export function useGeneration() {
     }
   }, []);
 
+  const generate = useCallback((request: GenerateRequest) => submit(request), [submit]);
+
+  // Retries a run that ended `status: "error"` after at least one step already succeeded —
+  // the server (lib/adapters/postgres/resume.ts) replays those steps instead of redoing them.
+  // `failedStep` is the step the prior run actually failed at; every step before it in
+  // pipeline order is what's being skipped, both on the wire and in the StepProgress UI. Only
+  // meaningful when `failedStep` isn't "naming"; callers are expected to have already checked
+  // that (the button that calls this only renders then).
+  const resume = useCallback(
+    (runId: string, failedStep: StepName) => {
+      const lastRequest = lastRequestRef.current;
+      if (!lastRequest) return;
+      const resumedSteps = STEP_NAMES.slice(0, STEP_NAMES.indexOf(failedStep));
+      return submit({ ...lastRequest, resume_from_run_id: runId }, resumedSteps);
+    },
+    [submit],
+  );
+
   const reset = useCallback(() => {
     controllerRef.current?.abort();
     dispatch({ type: "reset" });
   }, []);
 
-  return { state, generate, reset };
+  return { state, generate, resume, reset };
 }

@@ -67,13 +67,22 @@ describe("generationReducer", () => {
     expect(state).toEqual({ status: "succeeded", result });
   });
 
-  it("moves to run_error on a mid-run error event", () => {
+  it("moves to run_error on a mid-run error event, carrying the failed step", () => {
     let state: GenerationState = generationReducer(initialGenerationState, { type: "submit" });
     state = generationReducer(state, {
       type: "stream_event",
-      event: { type: "error", run_id: "run-1", code: "quota_exhausted", message: "Daily quota exhausted" },
+      event: { type: "error", run_id: "run-1", code: "quota_exhausted", message: "Daily quota exhausted", step: "naming" },
     });
-    expect(state).toEqual({ status: "run_error", runId: "run-1", code: "quota_exhausted", message: "Daily quota exhausted" });
+    expect(state).toEqual({ status: "run_error", runId: "run-1", code: "quota_exhausted", message: "Daily quota exhausted", step: "naming" });
+  });
+
+  it("carries a later failed step through run_error, the client's resumable signal", () => {
+    let state: GenerationState = generationReducer(initialGenerationState, { type: "submit" });
+    state = generationReducer(state, {
+      type: "stream_event",
+      event: { type: "error", run_id: "run-1", code: "provider_error", message: "503 from gemini", step: "packaging" },
+    });
+    expect(state).toMatchObject({ status: "run_error", step: "packaging" });
   });
 
   it("ignores a stream event once a terminal state is reached", () => {
@@ -101,7 +110,7 @@ describe("generationReducer", () => {
     let state: GenerationState = generationReducer(initialGenerationState, { type: "submit" });
     state = generationReducer(state, { type: "stream_event", event: { type: "run_started", run_id: "run-1" } });
     state = generationReducer(state, { type: "stream_failed", message: "network drop" });
-    expect(state).toEqual({ status: "run_error", runId: "run-1", code: "internal", message: "network drop" });
+    expect(state).toEqual({ status: "run_error", runId: "run-1", code: "internal", message: "network drop", step: "naming" });
   });
 
   it("reset always returns to idle", () => {

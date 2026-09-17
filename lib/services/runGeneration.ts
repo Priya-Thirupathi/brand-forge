@@ -3,8 +3,8 @@ import type { StepName } from "@/lib/contracts/stepName";
 import type { Violation } from "@/lib/contracts/violation";
 import type { CategoryFacts, FeasibilityOptionFacts } from "@/lib/domain/types";
 import type { AgentSpec } from "@/lib/domain/agents/types";
-import { namingAgent } from "@/lib/domain/agents/naming";
-import { taglineDescriptionAgent } from "@/lib/domain/agents/taglineDescription";
+import { namingAgent, type NamingAccepted } from "@/lib/domain/agents/naming";
+import { taglineDescriptionAgent, type TaglineDescriptionOutput } from "@/lib/domain/agents/taglineDescription";
 import { packagingAgent } from "@/lib/domain/agents/packaging";
 import { renderTemplate } from "@/lib/domain/prompts/render";
 import { renderRetryFeedback } from "@/lib/domain/prompts/retryFeedback";
@@ -43,6 +43,17 @@ export interface RunGenerationInput {
   option: FeasibilityOptionFacts;
   source: "user" | "eval";
   clientIpHash: string;
+  // Resuming a run that previously failed after at least one step succeeded — steps present
+  // here are skipped entirely (no LLM call, no new run_steps row), reusing the already-accepted
+  // value straight from lib/adapters/postgres/resume.ts's replay of the old run's raw_output.
+  // `resumedFromRunId` is bookkeeping only (persisted on the new run row); `resume` is what
+  // actually changes this function's behavior — they're expected together, but only `resume`'s
+  // presence matters here.
+  resumedFromRunId?: string;
+  resume?: {
+    naming?: NamingAccepted;
+    taglineDescription?: TaglineDescriptionOutput;
+  };
 }
 
 export interface RunGenerationDeps {
@@ -100,6 +111,7 @@ export async function runGeneration(
     category: input.category.slug,
     feasibilityOptionId: input.feasibilityOptionId,
     clientIpHash: input.clientIpHash,
+    resumedFromRunId: input.resumedFromRunId,
   });
   options.onEvent?.({ type: "run_started", runId });
 
@@ -125,11 +137,9 @@ export async function runGeneration(
     onEvent: options.onEvent,
   });
 
-  const naming = await runAgentStep(
-    namingAgent,
-    { idea: input.idea, category: input.category, option: input.option },
-    stepCtx("naming"),
-  );
+  const naming = input.resume?.naming
+    ? { kind: "accepted" as const, accepted: input.resume.naming, records: [] }
+    : await runAgentStep(namingAgent, { idea: input.idea, category: input.category, option: input.option }, stepCtx("naming"));
   records.push(...naming.records);
   qualityRetries += extraAttempts(naming.records);
   // Only recorded once the step actually made at least one call — a deadline pre-check can
@@ -152,11 +162,13 @@ export async function runGeneration(
 
   const brandName = naming.accepted.selectedName;
 
-  const tagline = await runAgentStep(
-    taglineDescriptionAgent,
-    { idea: input.idea, category: input.category, option: input.option, brandName },
-    stepCtx("tagline_description"),
-  );
+  const tagline = input.resume?.taglineDescription
+    ? { kind: "accepted" as const, accepted: input.resume.taglineDescription, records: [] }
+    : await runAgentStep(
+        taglineDescriptionAgent,
+        { idea: input.idea, category: input.category, option: input.option, brandName },
+        stepCtx("tagline_description"),
+      );
   records.push(...tagline.records);
   qualityRetries += extraAttempts(tagline.records);
   if (tagline.records.length > 0) promptVersions.tagline_description = taglineDescriptionAgent.promptVersion;

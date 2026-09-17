@@ -16,6 +16,7 @@ interface RunRow {
   input_tokens: number;
   output_tokens: number;
   thinking_tokens: number;
+  resumed_from_run_id: string | null;
 }
 
 interface RunStepModelRow {
@@ -49,7 +50,7 @@ export async function listRuns(pool: Pool, params: { limit: number; cursor?: str
   const { rows } = await pool.query<RunRow>(
     `select id, created_at, status, category, idea, failure,
             quality_retries, transport_retries, latency_ms,
-            input_tokens, output_tokens, thinking_tokens
+            input_tokens, output_tokens, thinking_tokens, resumed_from_run_id
      from runs
      ${conditions.length > 0 ? `where ${conditions.join(" and ")}` : ""}
      order by created_at desc, id desc
@@ -72,6 +73,7 @@ export async function listRuns(pool: Pool, params: { limit: number; cursor?: str
       idea: row.status === "succeeded" ? row.idea : undefined,
       failure: toFailure(row.failure),
       models: modelsByRun.get(row.id) ?? {},
+      resumed_from_run_id: row.resumed_from_run_id,
       quality_retries: row.quality_retries,
       transport_retries: row.transport_retries,
       latency_ms: row.latency_ms,

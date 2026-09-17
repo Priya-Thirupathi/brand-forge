@@ -9,6 +9,7 @@ import { pool } from "@/lib/adapters/postgres/pool";
 import { createPostgresGenerationStore } from "@/lib/adapters/postgres/generationStore";
 import { createGeminiClient } from "@/lib/adapters/gemini/client";
 import { findCategory } from "@/lib/adapters/postgres/catalog";
+import { loadResumableAccepted } from "@/lib/adapters/postgres/resume";
 import { hashIp } from "@/lib/adapters/postgres/ipHash";
 import { getClientIp } from "@/lib/adapters/clientIp";
 import { errorResponse, validationErrorResponse } from "../_shared/response";
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return validationErrorResponse(parsed.error);
   }
-  const { idea, category: categorySlug, feasibility_option_id: feasibilityOptionId } = parsed.data;
+  const { idea, category: categorySlug, feasibility_option_id: feasibilityOptionId, resume_from_run_id: resumeFromRunId } = parsed.data;
 
   const category = await findCategory(pool, categorySlug);
   if (!category) {
@@ -73,13 +74,23 @@ export async function POST(request: NextRequest) {
     return errorResponse("daily_cap_reached", "The daily generation limit has been reached. Try again tomorrow.", 429);
   }
 
+  const optionFacts = toFeasibilityOptionFacts(option);
+  // A resume request replays the target run's already-accepted steps (lib/adapters/postgres/
+  // resume.ts) against *this* request's idea/category/option, not ones re-read from the old
+  // run row — they're expected to be identical since the client resubmits the same form.
+  // `loadResumableAccepted` returning `{}` (target run not found, or its naming step wasn't
+  // actually accepted) just means an ordinary fresh run — never a hard failure.
+  const resume = resumeFromRunId ? await loadResumableAccepted(pool, resumeFromRunId, { idea, category, option: optionFacts }) : undefined;
+
   const input = {
     idea,
     category,
     feasibilityOptionId: option.id,
-    option: toFeasibilityOptionFacts(option),
+    option: optionFacts,
     source: "user" as const,
     clientIpHash,
+    resumedFromRunId: resumeFromRunId,
+    resume,
   };
 
   if (request.headers.get("accept") === "application/x-ndjson") {
@@ -118,7 +129,10 @@ async function respondOnce(input: GenerationInput, signal: AbortSignal) {
   try {
     const result = await runGeneration(input, { llmClient: createLlmClient(), store }, { signal });
     if (result.outcome.status === "error") {
-      return errorResponse(mapErrorCode(result.outcome.error), result.outcome.message, 500, { run_id: result.runId });
+      return errorResponse(mapErrorCode(result.outcome.error), result.outcome.message, 500, {
+        run_id: result.runId,
+        step: result.outcome.step,
+      });
     }
     return NextResponse.json(buildGenerateResult(result.runId, result.outcome, result.meta, result.ids));
   } catch {
@@ -138,14 +152,22 @@ function streamGeneration(input: GenerationInput, signal: AbortSignal): Response
           { signal, onEvent: (event) => send(toGenerateEvent(event)) },
         );
         if (result.outcome.status === "error") {
-          send({ type: "error", run_id: result.runId, code: mapErrorCode(result.outcome.error), message: result.outcome.message });
+          send({
+            type: "error",
+            run_id: result.runId,
+            code: mapErrorCode(result.outcome.error),
+            message: result.outcome.message,
+            step: result.outcome.step,
+          });
         } else {
           send({ type: "result", result: buildGenerateResult(result.runId, result.outcome, result.meta, result.ids) });
         }
       } catch {
         // No run_id was ever admitted (e.g. store.startRun itself failed) — TRD.md §8 requires
         // one on every error event, so this is the one case with nothing real to put there.
-        send({ type: "error", run_id: "", code: "internal", message: "Something went wrong before the run could finish." });
+        // `step: "naming"` is the same "nothing succeeded, nothing resumable" signal the client
+        // already reads for a genuine naming-step failure — nothing got far enough to resume.
+        send({ type: "error", run_id: "", code: "internal", message: "Something went wrong before the run could finish.", step: "naming" });
       } finally {
         controller.close();
       }

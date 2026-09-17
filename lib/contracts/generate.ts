@@ -9,6 +9,10 @@ export const GenerateRequestSchema = z.object({
   idea: z.string().trim().min(IDEA_LENGTH.min).max(IDEA_LENGTH.max),
   category: z.string(),
   feasibility_option_id: z.string().uuid().optional(),
+  // Retrying a run that previously ended `status: "error"` after at least one step already
+  // succeeded — the route replays that run's already-accepted steps (lib/adapters/postgres/
+  // resume.ts) instead of redoing them. Absent, this is an ordinary fresh generation.
+  resume_from_run_id: z.string().uuid().optional(),
 });
 export type GenerateRequest = z.infer<typeof GenerateRequestSchema>;
 
@@ -84,6 +88,9 @@ export const GenerateEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("step_started"), step: StepNameSchema }),
   z.object({ type: z.literal("step_finished"), step: StepNameSchema, attempt: z.union([z.literal(1), z.literal(2)]), passed: z.boolean() }),
   z.object({ type: z.literal("result"), result: GenerateResultSchema }),
-  z.object({ type: z.literal("error"), run_id: z.string(), code: GenerateErrorCodeSchema, message: z.string() }),
+  // `step` tells the client whether anything is resumable: `"naming"` means nothing succeeded
+  // yet (an ordinary retry is the only option), anything else means at least one earlier step
+  // did, so a resume request against this run_id can skip it.
+  z.object({ type: z.literal("error"), run_id: z.string(), code: GenerateErrorCodeSchema, message: z.string(), step: StepNameSchema }),
 ]);
 export type GenerateEvent = z.infer<typeof GenerateEventSchema>;

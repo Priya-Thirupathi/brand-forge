@@ -5,8 +5,13 @@ export type StepState = "pending" | "in_progress" | "passed" | "retrying" | "fai
 
 const STEP_NAMES: StepName[] = ["naming", "tagline_description", "packaging"];
 
-function initialSteps(): Record<StepName, StepState> {
-  return { naming: "pending", tagline_description: "pending", packaging: "pending" };
+// `resumedSteps` are steps a resume request is skipping (already accepted by a prior run) —
+// they start "passed" instead of "pending" since no `step_started`/`step_finished` event will
+// ever arrive for a step the server never re-attempts.
+function initialSteps(resumedSteps: StepName[] = []): Record<StepName, StepState> {
+  const steps: Record<StepName, StepState> = { naming: "pending", tagline_description: "pending", packaging: "pending" };
+  for (const step of resumedSteps) steps[step] = "passed";
+  return steps;
 }
 
 // Distinct from a mid-run `error` event (GenerationState "run_error", which has a run_id) —
@@ -24,13 +29,16 @@ export type GenerationState =
   | { status: "running"; runId?: string; steps: Record<StepName, StepState> }
   | { status: "succeeded"; result: GenerateResult }
   | { status: "rejected"; result: GenerateResult }
-  | { status: "run_error"; runId: string; code: GenerateErrorCode; message: string }
+  // `step` is the failed step — anything other than "naming" means at least one earlier step
+  // already succeeded and can be skipped on a resume (a POST /api/generate carrying
+  // `resume_from_run_id: runId`), not just retried from scratch.
+  | { status: "run_error"; runId: string; code: GenerateErrorCode; message: string; step: StepName }
   | ({ status: "admission_error" } & AdmissionError);
 
 export const initialGenerationState: GenerationState = { status: "idle" };
 
 export type GenerationAction =
-  | { type: "submit" }
+  | { type: "submit"; resumedSteps?: StepName[] }
   | ({ type: "admission_error" } & AdmissionError)
   | { type: "stream_event"; event: GenerateEvent }
   // The stream ended (network drop, parse failure) without ever sending a `result`/`error`
@@ -42,14 +50,17 @@ export type GenerationAction =
 export function generationReducer(state: GenerationState, action: GenerationAction): GenerationState {
   switch (action.type) {
     case "submit":
-      return { status: "running", steps: initialSteps() };
+      return { status: "running", steps: initialSteps(action.resumedSteps) };
     case "admission_error":
       return { status: "admission_error", httpStatus: action.httpStatus, error: action.error, message: action.message, retryAfterS: action.retryAfterS };
     case "reset":
       return { status: "idle" };
     case "stream_failed":
+      // The connection itself dropped, not a server-reported failure — whether anything is
+      // safely resumable is unknown (the server may still be running to completion in the
+      // background), so this never offers a resume, same as a naming-step failure.
       return state.status === "running"
-        ? { status: "run_error", runId: state.runId ?? "", code: "internal", message: action.message }
+        ? { status: "run_error", runId: state.runId ?? "", code: "internal", message: action.message, step: "naming" }
         : state;
     case "stream_event":
       return applyStreamEvent(state, action.event);
@@ -74,7 +85,7 @@ function applyStreamEvent(state: GenerationState, event: GenerateEvent): Generat
     case "result":
       return { status: event.result.status, result: event.result };
     case "error":
-      return { status: "run_error", runId: event.run_id, code: event.code, message: event.message };
+      return { status: "run_error", runId: event.run_id, code: event.code, message: event.message, step: event.step };
   }
 }
 
