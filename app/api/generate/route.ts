@@ -13,8 +13,7 @@ import { checkRateLimit } from "@/lib/services/rateLimitPolicy";
 import { pool } from "@/lib/adapters/postgres/pool";
 import { createPostgresGenerationStore } from "@/lib/adapters/postgres/generationStore";
 import { evalRunExists } from "@/lib/adapters/postgres/evalStore";
-import { createGeminiClient } from "@/lib/adapters/gemini/client";
-import { createQwenClient } from "@/lib/adapters/qwen/client";
+import { createLlmClient } from "@/lib/adapters/createLlmClient";
 import { findCategory } from "@/lib/adapters/postgres/catalog";
 import { loadResumableAccepted } from "@/lib/adapters/postgres/resume";
 import { hashIp } from "@/lib/adapters/postgres/ipHash";
@@ -159,26 +158,6 @@ export async function POST(request: NextRequest) {
     return streamGeneration(input, request.signal);
   }
   return respondOnce(input, request.signal);
-}
-
-// Built lazily inside each handler's try/catch below, not at module scope like `pool` — the
-// pool needs to persist connections across requests, but re-wrapping the SDK per call is
-// cheap, and building it here means a missing GEMINI_API_KEY surfaces as our own `internal`
-// 500, not an unhandled crash the first time this route is hit.
-function createLlmClient() {
-  // Local-dev-only escape hatch to test against Qwen (via Groq) instead of Gemini, so exercising
-  // this route repeatedly doesn't burn Gemini's free-tier daily quota. D2 still names Gemini as
-  // the only *production* provider — the NODE_ENV check keeps this from ever taking effect in a
-  // deployed build even if LOCAL_LLM_PROVIDER were set by mistake.
-  if (process.env.NODE_ENV !== "production" && process.env.LOCAL_LLM_PROVIDER === "qwen") {
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) throw new Error("GROQ_API_KEY is not set");
-    return createQwenClient(apiKey);
-  }
-
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
-  return createGeminiClient(apiKey);
 }
 
 function toFeasibilityOptionFacts(option: FeasibilityOption): FeasibilityOptionFacts {
