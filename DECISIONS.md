@@ -33,20 +33,25 @@ Each entry records the decision, why it was made, and the alternatives that were
 
 ---
 
-### D3 — The eval harness is a TypeScript CLI in this repo; no HTTP trigger
+### D3 — The eval harness is a TypeScript CLI in this repo, sharing its logic with an in-app trigger
 **Revised 2026-09-15:** was a Python CLI using DeepEval. Changed for a single-language full-stack codebase and the Gemini switch.
+**Revised 2026-09-17:** `POST /api/eval/run` now exists (below) — narrowed, not reversed.
 
-**Decision:** Stage 2 adds a TypeScript CLI that calls the app's `/api/generate` over HTTP, scores results (deterministic metrics + an LLM-judge rubric), and stores eval runs in Postgres. It imports the same Zod contracts as the app. `POST /api/eval/run` does not exist.
+**Decision:** Stage 2's harness logic (`lib/eval/{fixture,judge,runner,stats,aggregate}.ts`) calls the app's `/api/generate` over HTTP, scores results (deterministic metrics + an LLM-judge rubric), and stores eval runs in Postgres. It imports the same Zod contracts as the app. Two things can invoke it: `scripts/eval.ts` (the CLI) and, as of 2026-09-17, `POST /api/eval/run` (an authenticated route that starts a run and returns immediately, `202`, while the run continues in the background).
 
-**Why:**
+**Why the route was added:** running an eval meant leaving the app for a terminal, which is a worse experience for casual/portfolio use than a "Run eval" button belongs to. The original objection (below) was about a *public, unauthenticated* trigger specifically, not about HTTP-triggered evals in general — gating it behind the same `EVAL_TOKEN` the CLI already needs removes that objection while keeping the convenience.
+
+**Known limitation, not yet solved:** the route returns before the run finishes and lets the run continue as an un-awaited background task. That only keeps executing on a process that stays alive after the response — true for `next dev` and a self-hosted `next start`, **not guaranteed on Vercel's serverless functions**, where compute can stop once the response completes. This is fine for local/self-hosted use today; it needs a real fix (e.g. a queue, or `@vercel/functions`' `waitUntil`, or chunking the run into one-case-per-request steps the client re-triggers) before Stage 3 exposes this route on Vercel. Tracked here, not silently ignored.
+
+**Why (original, still holds for the CLI path):**
 - The PRD requires the harness to detect quality drops. Deterministic checks alone can't (structured output keeps schema validity near 100%, retries hide pass-rate drops, bland names pass every rule), so an LLM judge is required.
-- One language: the CLI reuses `lib/contracts` types and schemas, so the app and harness can't drift.
+- One language: both the CLI and the route reuse `lib/contracts` types/schemas and the same `lib/eval` logic, so they can't drift from each other or from the app.
 - It evolves an existing prototype (`prior-eval-prototype`: good vs. regressed prompt, one run, average score) into a rigorous harness (repeats, confidence intervals, stored baselines).
-- Calling the app over HTTP tests the running system as a black box and measures real latency.
+- Calling the app over HTTP tests the running system as a black box and measures real latency — true whether the caller is the CLI or the new route, since both still hit `/api/generate` over the network rather than calling `runGeneration` directly.
 
 **Rejected:**
 - *Python + DeepEval* — a second language and duplicated response models (Pydantic) for a library whose main value here was its name.
-- *`POST /api/eval/run`* — a single request running dozens of generations exceeds serverless duration limits, and a public trigger lets anyone burn the project's daily quota.
+- *An unauthenticated `POST /api/eval/run`* — still rejected: a single request running dozens of generations exceeds serverless duration limits, and a trigger open to any visitor lets anyone burn the project's daily quota. The 2026-09-17 route is authenticated the same way eval-sourced generations already are, which is the difference that makes it acceptable.
 
 ---
 

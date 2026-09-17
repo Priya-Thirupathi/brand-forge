@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { EvalRunSummary } from "@/lib/contracts/eval";
 import { Badge } from "@/components/ui/Badge";
 
@@ -28,21 +28,37 @@ function ComparisonBadges({ comparison }: { comparison: EvalRunSummary["comparis
   );
 }
 
-export function EvalSummary() {
+// While a run is in flight, aggregate/comparison are both still null (TRD.md §4) — the only
+// thing to show is a live count of case × repeat rows recorded so far, so a 20-minute run
+// gives some feedback instead of a static badge the whole time.
+const POLL_MS = 8_000;
+
+export function EvalSummary({ refreshSignal }: { refreshSignal?: number }) {
   const [runs, setRuns] = useState<EvalRunSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     fetch("/api/eval/summary")
       .then((res) => res.json())
       .then((body: { runs: EvalRunSummary[] }) => setRuns(body.runs))
       .catch(() => setError("Could not load eval runs."));
   }, []);
 
+  useEffect(() => {
+    load();
+  }, [load, refreshSignal]);
+
+  useEffect(() => {
+    const anyInProgress = runs?.some((run) => !run.finished_at) ?? false;
+    if (!anyInProgress) return;
+    const id = setInterval(load, POLL_MS);
+    return () => clearInterval(id);
+  }, [runs, load]);
+
   if (error) return <p className="text-sm text-danger">{error}</p>;
   if (!runs) return <p className="text-sm text-muted">Loading…</p>;
   if (runs.length === 0) {
-    return <p className="text-sm text-muted">No eval runs yet — see README.md for `npm run eval -- generate`.</p>;
+    return <p className="text-sm text-muted">No eval runs yet — start one above, or run `npm run eval -- generate` from a terminal.</p>;
   }
 
   return (
@@ -66,7 +82,7 @@ export function EvalSummary() {
                 <span className="inline-flex items-center gap-2">
                   {run.label}
                   {run.is_baseline && <Badge variant="neutral">baseline</Badge>}
-                  {!run.finished_at && <Badge variant="info">in progress</Badge>}
+                  {!run.finished_at && <Badge variant="info">{run.completed_case_repeats} so far…</Badge>}
                 </span>
               </td>
               <td className="px-4 py-2.5 font-mono text-[13px] text-muted">{new Date(run.created_at).toLocaleString()}</td>

@@ -115,6 +115,10 @@ export const EvalRunSummarySchema = z.object({
   finished_at: z.string().nullable(),
   is_baseline: z.boolean(),
   repeats: z.number().int(),
+  // Live progress for a run still in flight (aggregate is null until it finishes) — a count of
+  // eval_results rows recorded so far, so the UI has something to show besides a static badge
+  // for however long the run takes.
+  completed_case_repeats: z.number().int(),
   aggregate: EvalAggregateSchema.nullable(),
   comparison: EvalComparisonSchema.nullable(),
 });

@@ -145,8 +145,10 @@ export async function listEvalRunSummaries(pool: Pool, params: { label?: string;
   }
   values.push(params.limit);
 
-  const { rows } = await pool.query<EvalRunRow>(
-    `select ${EVAL_RUN_COLUMNS} from eval_runs
+  const { rows } = await pool.query<EvalRunRow & { completed_case_repeats: string }>(
+    `select ${EVAL_RUN_COLUMNS},
+            (select count(*) from eval_results er where er.eval_run_id = eval_runs.id) as completed_case_repeats
+     from eval_runs
      ${conditions.length > 0 ? `where ${conditions.join(" and ")}` : ""}
      order by created_at desc
      limit $${values.length}`,
@@ -161,6 +163,7 @@ export async function listEvalRunSummaries(pool: Pool, params: { label?: string;
     finished_at: row.finished_at?.toISOString() ?? null,
     is_baseline: row.is_baseline,
     repeats: row.repeats,
+    completed_case_repeats: Number(row.completed_case_repeats),
     aggregate: row.aggregate,
     comparison: row.comparison,
   }));

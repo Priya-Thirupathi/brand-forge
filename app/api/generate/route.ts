@@ -1,4 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { GenerateRequestSchema, type GenerateErrorCode, type GenerateEvent, type GenerateResult } from "@/lib/contracts/generate";
 import { parseEvalPromptVariant } from "@/lib/contracts/eval";
@@ -19,6 +18,7 @@ import { loadResumableAccepted } from "@/lib/adapters/postgres/resume";
 import { hashIp } from "@/lib/adapters/postgres/ipHash";
 import { getClientIp } from "@/lib/adapters/clientIp";
 import { errorResponse, validationErrorResponse } from "../_shared/response";
+import { evalTokenMatches } from "../_shared/evalAuth";
 
 // Next.js route segment config: must be a literal for the build's static analysis, not a
 // value derived from RUN_DEADLINE_MS (lib/services/runGeneration.ts's 25s run deadline) —
@@ -46,7 +46,7 @@ async function resolveEvalAdmission(request: NextRequest): Promise<{ ok: true; a
   if (!token) return { ok: true, admission: { source: "user" } };
 
   const expected = process.env.EVAL_TOKEN;
-  if (!expected || !tokenMatches(token, expected)) {
+  if (!expected || !evalTokenMatches(token, expected)) {
     return { ok: false, response: errorResponse("invalid_eval_token", "This target does not accept eval traffic.", 401) };
   }
 
@@ -66,13 +66,6 @@ async function resolveEvalAdmission(request: NextRequest): Promise<{ ok: true; a
   }
 
   return { ok: true, admission: { source: "eval", evalRunId, namingAgentOverride } };
-}
-
-// Constant-time so a wrong token can't be brute-forced by timing the response (TRD.md §10).
-function tokenMatches(provided: string, expected: string): boolean {
-  const a = Buffer.from(provided);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 export async function POST(request: NextRequest) {

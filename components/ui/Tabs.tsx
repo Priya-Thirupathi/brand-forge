@@ -3,12 +3,14 @@
 import { useState } from "react";
 import { GenerateTab } from "@/components/generate/GenerateTab";
 import { GalleryTab } from "@/components/gallery/GalleryTab";
-import { UnderTheHoodTab } from "@/components/runs/UnderTheHoodTab";
+import { RunsTab } from "@/components/runs/RunsTab";
+import { EvaluationTab } from "@/components/runs/EvaluationTab";
 
 const TABS = [
   { id: "generate", label: "Generate" },
   { id: "gallery", label: "Gallery" },
-  { id: "runs", label: "Under the hood" },
+  { id: "runs", label: "Runs" },
+  { id: "evaluation", label: "Evaluation" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -37,7 +39,8 @@ export function Tabs() {
       <main className="mx-auto w-full max-w-4xl flex-1 px-6 py-10 sm:px-10">
         {active === "generate" && <GenerateTab />}
         {active === "gallery" && <GalleryTab />}
-        {active === "runs" && <UnderTheHoodTab />}
+        {active === "runs" && <RunsTab />}
+        {active === "evaluation" && <EvaluationTab />}
       </main>
     </div>
   );
