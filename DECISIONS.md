@@ -324,6 +324,22 @@ ESLint `no-restricted-imports` enforces the domain, contracts, and services rule
 
 ---
 
+### D25 — Resume creates a new run row, linked via `resumed_from_run_id`
+**Added 2026-09-17.**
+
+**Decision:** Retrying a run that failed after at least one step succeeded (e.g. `naming` passed, `tagline_description` hit a transient `provider_error`) starts a **new** run with a new `run_id`, carrying a nullable `runs.resumed_from_run_id` pointer to the failed run. The already-succeeded steps' accepted output is re-validated against the live agent's `evaluate()` and reused; only the remaining steps make a fresh LLM call.
+
+**Why:**
+- Keeps the existing create-once/finish-once `runs` row lifecycle (D-implicit in §4) untouched — no run is ever reopened or mutated after `finishRun`.
+- Re-validating stored `raw_output` through the same `evaluate()` a live pipeline uses means a resumed step is judged identically to a live one, not trusted blindly.
+- Avoids repeating LLM calls (and burning Gemini free-tier quota, D2) for steps that already produced accepted output.
+
+**Rejected:**
+- *Continue the same run row* — would mean reopening a `finished_at` row and re-deriving its status, contradicting the run lifecycle's single-writer, finish-once model and complicating rate-limit counting (D16 counts rows, not attempts).
+- *Client resubmits the prior accepted output directly* — would let a client claim any content as "already accepted" without server-side re-validation; re-running `evaluate()` against the stored `raw_output` server-side is the only way to keep guardrail enforcement authoritative.
+
+---
+
 ## Open items — need a human
 1. **Quota numbers.** Read the project's requests-per-minute and requests-per-day for both models on the AI Studio rate-limit page, then set `GLOBAL_DAILY_GENERATION_CAP` ≤ RPD ÷ 6 (worst case: 3 steps × 2 attempts).
 2. **Feasibility numbers.** Seed values are labelled illustrative but need a plausibility pass.

@@ -123,6 +123,7 @@ Index `(source, hidden, category, created_at desc)`.
 | feasibility_option_id | uuid, fk | |
 | status | text not null | check in (`running`, `succeeded`, `rejected`, `error`) |
 | failure | jsonb, nullable | `{ step, violations: [{ rule, message }] }` or `{ step, error, message }` |
+| resumed_from_run_id | uuid, fk → runs.id, nullable | set when this run resumes a prior run's already-succeeded steps [D25] |
 | name_candidates | jsonb, nullable | `[{ name, rationale, passed, violations }]` |
 | prompt_versions | jsonb not null | `{ step: hash }` |
 | input_tokens, output_tokens, thinking_tokens | int not null default 0 | sums across steps |
@@ -288,7 +289,8 @@ Guardrail rejections return 200 with `status: "rejected"`. [D19]
 **`POST /api/generate`**
 ```ts
 // request
-{ idea: string; category: string; feasibility_option_id?: string }   // option defaults to the category's default
+{ idea: string; category: string; feasibility_option_id?: string;   // option defaults to the category's default
+  resume_from_run_id?: string }   // [D25] re-validates that run's succeeded steps instead of re-calling the LLM for them
 ```
 With `Accept: application/x-ndjson`, the response streams events (`Cache-Control: no-cache, no-transform`, `X-Accel-Buffering: no`). Otherwise it returns one JSON body equal to the `result` event, or the error body. [D13]
 ```ts
@@ -297,7 +299,8 @@ type GenerateEvent =
   | { type: "step_started"; step: StepName }
   | { type: "step_finished"; step: StepName; attempt: 1 | 2; passed: boolean }
   | { type: "result"; result: GenerateResult }
-  | { type: "error"; run_id: string; code: "quota_exhausted" | "deadline_exceeded" | "provider_error" | "aborted" | "internal"; message: string };
+  | { type: "error"; run_id: string; step: StepName; code: "quota_exhausted" | "deadline_exceeded" | "provider_error" | "aborted" | "internal"; message: string };
+  // `step` is the resumability signal [D25]: step !== "naming" means at least naming already succeeded and a client can offer "Resume from {step}"
 
 type GenerateResult = {
   run_id: string;
@@ -321,7 +324,7 @@ type GenerateResult = {
 
 **`GET /api/brands/:id`** → brand and its visible products.
 
-**`GET /api/runs?limit&cursor`** → run metadata only: id, created_at, status, failure (step + rule ids), models, quality and transport retries, latency, tokens. Never `raw_output`, idea text of non-succeeded runs, or IP hashes.
+**`GET /api/runs?limit&cursor`** → run metadata only: id, created_at, status, failure (step + rule ids), resumed_from_run_id, models, quality and transport retries, latency, tokens. Never `raw_output`, idea text of non-succeeded runs, or IP hashes.
 
 Stage 2 adds `GET /api/eval/summary` and eval-only headers (`X-Eval-Token`, `X-Eval-Run-Id`, `X-Eval-Prompt-Variant`).
 
