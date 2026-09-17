@@ -1,6 +1,6 @@
 import { GoogleGenAI, type GenerateContentParameters, type GenerateContentResponse } from "@google/genai";
 import type { LlmClient, LlmOutcome, LlmRequest, TokenUsage } from "@/lib/services/ports";
-import { withRetry, type RetryClassification } from "./withRetry";
+import { withRetry, type RetryClassification } from "../withRetry";
 import { classifyApiError } from "./errors";
 
 // TRD.md §5 "Timeouts and retries".

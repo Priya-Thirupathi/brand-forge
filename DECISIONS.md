@@ -340,6 +340,21 @@ ESLint `no-restricted-imports` enforces the domain, contracts, and services rule
 
 ---
 
+### D26 — A local-dev-only Qwen (via Groq) adapter exists alongside Gemini
+**Added 2026-09-17.**
+
+**Decision:** `lib/adapters/qwen/client.ts` implements `LlmClient` against Groq's OpenAI-compatible API (`qwen/qwen3.8-27b`), selected only when both `NODE_ENV !== "production"` and `LOCAL_LLM_PROVIDER=qwen` are set (`app/api/generate/route.ts`'s `createLlmClient`). Its purpose is exercising the app repeatedly (e.g. live-testing D25's resume flow) without spending Gemini's ~20-100/day free-tier quota; Groq's free tier gives 1,000 requests/day for this model. This does **not** revise D2 — Gemini remains the only provider a deployed build can select, enforced by the `NODE_ENV` check, not just convention.
+
+**Why:** Gemini's daily quota is small enough that a single testing session can exhaust it before finishing (observed repeatedly the week of 2026-09-15), blocking live verification of anything beyond the first failure. `LlmClient` was already a port (D23), so adding a second adapter is additive.
+
+**Known gap, accepted:** Groq/Qwen exposes no equivalent of Gemini's safety feedback (D22) — the Qwen adapter never produces `prompt_blocked`/`response_blocked`. Moderation guardrails go untested when running against Qwen; that's fine for testing unrelated flows (e.g. resume) but means a Qwen-only test pass is not a substitute for testing against real Gemini before shipping.
+
+**Rejected:**
+- *Self-hosted Qwen via Ollama* — the dev machine has no GPU and only ~14GB free disk; CPU-only inference on a model large enough for reliable JSON-schema output would likely exceed the app's 10s per-call/25s run deadlines.
+- *OpenRouter's free Qwen models* — free tier is more restrictive (50 req/day) than what we're trying to escape, and has documented unreliable structured-output support for Qwen specifically.
+
+---
+
 ## Open items — need a human
 1. **Quota numbers.** Read the project's requests-per-minute and requests-per-day for both models on the AI Studio rate-limit page, then set `GLOBAL_DAILY_GENERATION_CAP` ≤ RPD ÷ 6 (worst case: 3 steps × 2 attempts).
 2. **Feasibility numbers.** Seed values are labelled illustrative but need a plausibility pass.
