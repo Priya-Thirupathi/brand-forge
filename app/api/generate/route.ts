@@ -1,12 +1,18 @@
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { GenerateRequestSchema, type GenerateErrorCode, type GenerateEvent, type GenerateResult } from "@/lib/contracts/generate";
+import { parseEvalPromptVariant } from "@/lib/contracts/eval";
 import type { FeasibilityOptionFacts } from "@/lib/domain/types";
 import type { GenerationOutcome } from "@/lib/domain/result";
+import { namingDegradedAgent } from "@/lib/domain/agents/namingDegraded";
+import type { NamingAccepted, NamingInput, NamingOutput } from "@/lib/domain/agents/naming";
+import type { AgentSpec } from "@/lib/domain/agents/types";
 import type { FeasibilityOption, FinishedRunIds, TransportFailureReason } from "@/lib/services/ports";
 import { runGeneration, type RunMeta, type RunProgressEvent } from "@/lib/services/runGeneration";
 import { checkRateLimit } from "@/lib/services/rateLimitPolicy";
 import { pool } from "@/lib/adapters/postgres/pool";
 import { createPostgresGenerationStore } from "@/lib/adapters/postgres/generationStore";
+import { evalRunExists } from "@/lib/adapters/postgres/evalStore";
 import { createGeminiClient } from "@/lib/adapters/gemini/client";
 import { createQwenClient } from "@/lib/adapters/qwen/client";
 import { findCategory } from "@/lib/adapters/postgres/catalog";
@@ -25,11 +31,62 @@ const store = createPostgresGenerationStore(pool);
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
+interface EvalAdmission {
+  source: "user" | "eval";
+  evalRunId?: string;
+  namingAgentOverride?: AgentSpec<NamingInput, NamingOutput, NamingAccepted>;
+}
+
+// TRD.md §8/§10 (Stage 2): a valid `X-Eval-Token` makes this request `source: "eval"` and
+// exempts it from checkRateLimit entirely — the harness paces itself (TRD.md §9), and
+// `runs`/`countRuns` already filter `source = user` for the app's own caps, so this bypass
+// just makes that exemption explicit instead of accidental. No header at all is the ordinary,
+// unchanged `source: "user"` path.
+async function resolveEvalAdmission(request: NextRequest): Promise<{ ok: true; admission: EvalAdmission } | { ok: false; response: NextResponse }> {
+  const token = request.headers.get("x-eval-token");
+  if (!token) return { ok: true, admission: { source: "user" } };
+
+  const expected = process.env.EVAL_TOKEN;
+  if (!expected || !tokenMatches(token, expected)) {
+    return { ok: false, response: errorResponse("invalid_eval_token", "This target does not accept eval traffic.", 401) };
+  }
+
+  const evalRunId = request.headers.get("x-eval-run-id");
+  if (!evalRunId || !(await evalRunExists(pool, evalRunId))) {
+    return { ok: false, response: errorResponse("unknown_eval_run", "X-Eval-Run-Id does not reference an existing eval run.", 404) };
+  }
+
+  const variantHeader = request.headers.get("x-eval-prompt-variant");
+  let namingAgentOverride: AgentSpec<NamingInput, NamingOutput, NamingAccepted> | undefined;
+  if (variantHeader) {
+    const variant = parseEvalPromptVariant(variantHeader);
+    if (!variant) {
+      return { ok: false, response: errorResponse("invalid_input", `Unknown X-Eval-Prompt-Variant "${variantHeader}".`, 400) };
+    }
+    namingAgentOverride = namingDegradedAgent;
+  }
+
+  return { ok: true, admission: { source: "eval", evalRunId, namingAgentOverride } };
+}
+
+// Constant-time so a wrong token can't be brute-forced by timing the response (TRD.md §10).
+function tokenMatches(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 export async function POST(request: NextRequest) {
   const salt = process.env.IP_HASH_SALT;
   if (!salt) {
     return errorResponse("internal", "Server is misconfigured (IP_HASH_SALT is not set).", 500);
   }
+
+  const evalAdmission = await resolveEvalAdmission(request);
+  if (!evalAdmission.ok) {
+    return evalAdmission.response;
+  }
+  const { source, evalRunId, namingAgentOverride } = evalAdmission.admission;
 
   const json = await request.json().catch(() => null);
   const parsed = GenerateRequestSchema.safeParse(json);
@@ -56,23 +113,25 @@ export async function POST(request: NextRequest) {
   const ip = getClientIp(request.headers) ?? "unknown";
   const clientIpHash = hashIp(ip, salt);
 
-  const rateLimitDecision = checkRateLimit(
-    {
-      ipRunsInLastHour: await store.countRuns({ ipHash: clientIpHash, since: new Date(Date.now() - HOUR_MS) }),
-      globalRunsInLast24h: await store.countRuns({ since: new Date(Date.now() - DAY_MS) }),
-    },
-    {
-      perIpLimitPerHour: Number(process.env.RATE_LIMIT_GENERATE_PER_HOUR ?? 10),
-      globalDailyCap: Number(process.env.GLOBAL_DAILY_GENERATION_CAP ?? 50),
-    },
-  );
-  if (!rateLimitDecision.allowed) {
-    if (rateLimitDecision.reason === "rate_limited") {
-      return errorResponse("rate_limited", "Too many generations from this address. Try again later.", 429, {
-        retry_after_s: rateLimitDecision.retryAfterS,
-      });
+  if (source === "user") {
+    const rateLimitDecision = checkRateLimit(
+      {
+        ipRunsInLastHour: await store.countRuns({ ipHash: clientIpHash, since: new Date(Date.now() - HOUR_MS) }),
+        globalRunsInLast24h: await store.countRuns({ since: new Date(Date.now() - DAY_MS) }),
+      },
+      {
+        perIpLimitPerHour: Number(process.env.RATE_LIMIT_GENERATE_PER_HOUR ?? 10),
+        globalDailyCap: Number(process.env.GLOBAL_DAILY_GENERATION_CAP ?? 50),
+      },
+    );
+    if (!rateLimitDecision.allowed) {
+      if (rateLimitDecision.reason === "rate_limited") {
+        return errorResponse("rate_limited", "Too many generations from this address. Try again later.", 429, {
+          retry_after_s: rateLimitDecision.retryAfterS,
+        });
+      }
+      return errorResponse("daily_cap_reached", "The daily generation limit has been reached. Try again tomorrow.", 429);
     }
-    return errorResponse("daily_cap_reached", "The daily generation limit has been reached. Try again tomorrow.", 429);
   }
 
   const optionFacts = toFeasibilityOptionFacts(option);
@@ -88,10 +147,12 @@ export async function POST(request: NextRequest) {
     category,
     feasibilityOptionId: option.id,
     option: optionFacts,
-    source: "user" as const,
+    source,
     clientIpHash,
     resumedFromRunId: resumeFromRunId,
     resume,
+    evalRunId,
+    namingAgentOverride,
   };
 
   if (request.headers.get("accept") === "application/x-ndjson") {

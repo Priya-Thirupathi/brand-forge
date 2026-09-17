@@ -91,10 +91,10 @@ export function createPostgresGenerationStore(pool: Pool): GenerationStore {
 
     async startRun(run: NewRun) {
       const { rows } = await pool.query<{ id: string }>(
-        `insert into runs (source, idea, category, feasibility_option_id, status, prompt_versions, client_ip_hash, resumed_from_run_id)
-         values ($1, $2, $3, $4, 'running', '{}'::jsonb, $5, $6)
+        `insert into runs (source, idea, category, feasibility_option_id, status, prompt_versions, client_ip_hash, resumed_from_run_id, eval_run_id)
+         values ($1, $2, $3, $4, 'running', '{}'::jsonb, $5, $6, $7)
          returning id`,
-        [run.source, run.idea, run.category, run.feasibilityOptionId, run.clientIpHash, run.resumedFromRunId ?? null],
+        [run.source, run.idea, run.category, run.feasibilityOptionId, run.clientIpHash, run.resumedFromRunId ?? null, run.evalRunId ?? null],
       );
       return rows[0].id;
     },

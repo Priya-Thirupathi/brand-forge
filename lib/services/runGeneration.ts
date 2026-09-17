@@ -3,7 +3,7 @@ import type { StepName } from "@/lib/contracts/stepName";
 import type { Violation } from "@/lib/contracts/violation";
 import type { CategoryFacts, FeasibilityOptionFacts } from "@/lib/domain/types";
 import type { AgentSpec } from "@/lib/domain/agents/types";
-import { namingAgent, type NamingAccepted } from "@/lib/domain/agents/naming";
+import { namingAgent, type NamingAccepted, type NamingInput, type NamingOutput } from "@/lib/domain/agents/naming";
 import { taglineDescriptionAgent, type TaglineDescriptionOutput } from "@/lib/domain/agents/taglineDescription";
 import { packagingAgent } from "@/lib/domain/agents/packaging";
 import { renderTemplate } from "@/lib/domain/prompts/render";
@@ -54,6 +54,12 @@ export interface RunGenerationInput {
     naming?: NamingAccepted;
     taglineDescription?: TaglineDescriptionOutput;
   };
+  // Present only on `source: "eval"` runs — see NewRun.evalRunId.
+  evalRunId?: string;
+  // Stage 2 sensitivity proof (TRD.md §9): swaps in an alternate naming prompt for this run
+  // only, selected via `X-Eval-Prompt-Variant: naming=degraded`. Absent on every user-sourced
+  // and ordinary eval run.
+  namingAgentOverride?: AgentSpec<NamingInput, NamingOutput, NamingAccepted>;
 }
 
 export interface RunGenerationDeps {
@@ -112,6 +118,7 @@ export async function runGeneration(
     feasibilityOptionId: input.feasibilityOptionId,
     clientIpHash: input.clientIpHash,
     resumedFromRunId: input.resumedFromRunId,
+    evalRunId: input.evalRunId,
   });
   options.onEvent?.({ type: "run_started", runId });
 
@@ -137,14 +144,15 @@ export async function runGeneration(
     onEvent: options.onEvent,
   });
 
+  const effectiveNamingAgent = input.namingAgentOverride ?? namingAgent;
   const naming = input.resume?.naming
     ? { kind: "accepted" as const, accepted: input.resume.naming, records: [] }
-    : await runAgentStep(namingAgent, { idea: input.idea, category: input.category, option: input.option }, stepCtx("naming"));
+    : await runAgentStep(effectiveNamingAgent, { idea: input.idea, category: input.category, option: input.option }, stepCtx("naming"));
   records.push(...naming.records);
   qualityRetries += extraAttempts(naming.records);
   // Only recorded once the step actually made at least one call — a deadline pre-check can
   // stop it before that, and an unattempted step shouldn't claim a prompt version was used.
-  if (naming.records.length > 0) promptVersions.naming = namingAgent.promptVersion;
+  if (naming.records.length > 0) promptVersions.naming = effectiveNamingAgent.promptVersion;
   if (naming.kind !== "accepted") {
     return finish(
       deps.store,

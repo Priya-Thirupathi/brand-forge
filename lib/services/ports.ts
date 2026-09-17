@@ -80,6 +80,9 @@ export interface NewRun {
   // The failed run this one is retrying without redoing its already-succeeded steps — a new
   // run row, not a continuation of the old one (runs stay create-once/finish-once).
   resumedFromRunId?: string;
+  // Set only on `source: "eval"` runs, from the harness's `X-Eval-Run-Id` (TRD.md §8/§9) —
+  // traceability from this run back to the eval_runs row that produced it.
+  evalRunId?: string;
 }
 
 export interface RunStepRecord {

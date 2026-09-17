@@ -60,7 +60,7 @@ A Gemini prompt block during any step rejects the run with `input.safety`. Exhau
 
 Conventions: all tables in `public` with **RLS enabled and no policies** [D15]; `uuid default gen_random_uuid()` ids; `created_at timestamptz not null default now()`.
 
-Stage 1 tables are below. Stage 2 adds `eval_runs`, `eval_results`, and `runs.eval_run_id`. Stage 5 adds `runs.parent_run_id` and `runs.input_brand_id`. Each arrives in its own migration when first used.
+Stage 1 tables and Stage 2's `eval_runs`/`eval_results`/`runs.eval_run_id` are below (each arrived in its own migration). Stage 5 adds `runs.parent_run_id` and `runs.input_brand_id`, not yet built.
 
 **categories**
 | column | type | notes |
@@ -153,6 +153,49 @@ Lifecycle: inserted as `running` when admitted, so in-flight requests count towa
 | created_at | timestamptz | |
 
 **schema_migrations** — `name text pk, applied_at timestamptz`; written by the migration script.
+
+**eval_runs** — one row per `npm run eval -- generate` invocation (Stage 2, §9)
+| column | type | notes |
+|---|---|---|
+| id | uuid, pk | this run's `X-Eval-Run-Id` |
+| label | text not null | e.g. `naming-degraded-2026-09-20` |
+| git_sha | text not null | `git rev-parse HEAD` at invocation time |
+| target | text not null | the `--target` URL |
+| fixture_version | text not null | `lib/eval/fixture.ts`'s `FIXTURE_VERSION` |
+| prompt_versions | jsonb not null | `{ step: hash }`, from the first case's `GenerateResult.meta` |
+| models | jsonb not null | `{ step: model }` plus `judge`, from the same |
+| repeats | int not null | check > 0 |
+| is_baseline | bool not null default false | set by `--set-baseline`; more than one row may hold it over time, `compare` uses the latest |
+| aggregate | jsonb, nullable | this run's own metrics (§9 "Metrics"), null until every case × repeat completes |
+| comparison | jsonb, nullable | this run vs. the baseline at compare time (§9 "Comparison"), null until `compare` runs |
+| created_at, finished_at | timestamptz | `finished_at` nullable — a resumable run spanning days is not yet finished |
+
+Index `(is_baseline, created_at desc)`.
+
+**eval_results** — one row per fixture case × repeat, written as it completes (resumability)
+| column | type | notes |
+|---|---|---|
+| id | uuid, pk | |
+| eval_run_id | uuid, fk → eval_runs.id on delete cascade | |
+| case_id | text not null | fixture case id |
+| repeat | smallint not null | 1-based |
+| run_id | uuid, fk → runs.id, nullable | null when admission itself failed (rate limit, bad token) before a run row could exist |
+| expected_outcome | text not null | check in (`pass`, `reject`, `safe`) — fixture's expectation |
+| actual_outcome | text not null | check in (`pass`, `reject`, `error`, `admission_error`) |
+| outcome_match | bool not null | `actual_outcome` satisfies `expected_outcome` (`safe` accepts either `reject` or a `pass` with relevance ≥ 0.5) |
+| first_attempt_pass | bool, nullable | naming's first quality attempt passed with no retry; null on non-`pass` outcomes |
+| quality_retries | int, nullable | from `GenerateResult.guardrails.quality_retries` |
+| throttled | bool not null default false | this case × repeat waited on the harness's own RPM pacing, not app-side retry |
+| latency_ms, first_event_ms | int, nullable | from `GenerateResult.meta`/the stream's first event |
+| input_tokens, output_tokens, thinking_tokens | int not null default 0 | |
+| relevance_score, distinctiveness_score | numeric(3,2), nullable | judge rubric, 0–1; null on non-`pass` outcomes (nothing to judge) |
+| name_uniqueness | numeric(3,2), nullable | fraction of the 3 name candidates that are pairwise distinct; null on non-`pass` |
+| judge_reason | text, nullable | judge's one-sentence rationale |
+| created_at | timestamptz | |
+
+Unique `(eval_run_id, case_id, repeat)` — `--resume` upserts on conflict, skipping a case × repeat that already has a row instead of re-spending quota on it.
+
+`runs.eval_run_id` — nullable `uuid references eval_runs (id)`, set on every run the harness admits (via `X-Eval-Run-Id`), so eval-sourced `runs`/`products` rows can be found directly without joining `eval_results`.
 
 ### 5. Agent Chain
 
@@ -326,7 +369,16 @@ type GenerateResult = {
 
 **`GET /api/runs?limit&cursor`** → run metadata only: id, created_at, status, failure (step + rule ids), resumed_from_run_id, models, quality and transport retries, latency, tokens. Never `raw_output`, idea text of non-succeeded runs, or IP hashes.
 
-Stage 2 adds `GET /api/eval/summary` and eval-only headers (`X-Eval-Token`, `X-Eval-Run-Id`, `X-Eval-Prompt-Variant`).
+**`POST /api/generate` eval headers (Stage 2)** — present only when the harness, not a browser, is calling:
+| Header | Required with the others | Effect |
+|---|---|---|
+| `X-Eval-Token` | — | Must equal `EVAL_TOKEN` (§12). Missing header → ordinary `source: "user"` admission, unchanged. Present but wrong, or `EVAL_TOKEN` unset on this target → `401 invalid_eval_token`, no run created. |
+| `X-Eval-Run-Id` | yes | The calling `eval_runs.id`. Must already exist (`404 unknown_eval_run` if not — the CLI always creates its `eval_runs` row before the first case). Stamped onto `runs.eval_run_id`. |
+| `X-Eval-Prompt-Variant` | no | `step=variant`, e.g. `naming=degraded` (§9 sensitivity proof). Unknown step or variant name → `400 invalid_input`. Only `naming=degraded` exists today. |
+
+A valid token admits the request as `source: "eval"` and **skips `checkRateLimit` entirely** — the harness's own RPM pacing (§9) is the only throttle, and `runs` queries for the app's per-IP/global caps already filter `source = user` (§10), so eval traffic was already invisible to them even before this bypass made it explicit. `GenerateResult`/the stream are otherwise identical to a user-sourced run — the harness reads `run_id`, `status`, `meta`, `name_candidates`, and `guardrails.failure` the same way a browser client would.
+
+**`GET /api/eval/summary?label&limit`** → recent `eval_runs` (newest first, optionally filtered by `label`): `id, label, git_sha, created_at, finished_at, is_baseline, repeats, aggregate, comparison`. Never `eval_results` rows (that detail is for the CLI's own `compare` output, not the UI).
 
 ### 9. Evaluation Harness (Stage 2)
 - **CLI:** `npm run eval -- generate --target URL --label NAME [--repeats 3] [--set-baseline] [--prompt-variant naming=degraded] [--resume EVAL_RUN_ID]`, plus `compare`.
@@ -350,6 +402,7 @@ Stage 2 adds `GET /api/eval/summary` and eval-only headers (`X-Eval-Token`, `X-E
 - **Client IP:** first address of `x-forwarded-for`, else `x-real-ip`; hashed with `IP_HASH_SALT`; raw IP never stored.
 - **Public data:** Generate-tab notice (stored, public, processed by Gemini's free tier). Moderation: `update products set hidden = true where id = …`. `/api/runs` exposes metadata only.
 - **Prompt injection:** §5 prompt construction; §7 known limitations.
+- **Eval harness auth (Stage 2):** `X-Eval-Token` must equal `EVAL_TOKEN`, checked with a constant-time comparison (`crypto.timingSafeEqual`), not `===`. `EVAL_TOKEN` unset means this target doesn't accept eval traffic at all — the deployed public demo (Stage 3) can leave it unset, since a valid token bypasses the rate limits (§8, §9) that otherwise bound the project's free-tier quota.
 
 ### 11. Non-Functional Requirements
 - **Latency:** PRD M5; throttled runs reported separately.
@@ -369,6 +422,9 @@ Stage 2 adds `GET /api/eval/summary` and eval-only headers (`X-Eval-Token`, `X-E
 | `IP_HASH_SALT` | — | ≥ 16 chars |
 | `RATE_LIMIT_GENERATE_PER_HOUR` | 10 | |
 | `GLOBAL_DAILY_GENERATION_CAP` | 50 | see §10 |
+| `EVAL_TOKEN` | — | Stage 2; unset disables eval traffic on this target (§10) |
+| `JUDGE_MODEL` | `gemini-3.5-flash-lite` | Stage 2; deliberately a different tier than `MODEL_STRONG` so the judge isn't the same model grading itself (§9, risk table §9 in PRD.md) |
+| `EVAL_TARGET_RPM` | 6 | Stage 2; CLI's own pacing against `--target`, independent of `RATE_LIMIT_GENERATE_PER_HOUR` |
 
 ### 13. Testing & CI
 - **Unit — domain (no mocks):** every guardrail rule, table-driven, including false positives ("classic", "plastic-free" on a steel bottle, "pet treats"); normalization; name selection; first-run cash; prompt versions; result-builder invariant; request schema; every output schema converts to JSON Schema without unsupported keywords.
