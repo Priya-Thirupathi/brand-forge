@@ -7,6 +7,14 @@ const STATUS_STYLES: Record<RunSummary["status"], string> = {
   error: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
 };
 
+// RunSummary.failure is one of two shapes (TRD.md §4/§8): a guardrail rejection names rule
+// ids, a transport failure names its reason code — no message, on purpose (see the contract).
+function formatFailure(failure: RunSummary["failure"]): string {
+  if (!failure) return "—";
+  if ("rules" in failure) return `${failure.step}: ${failure.rules.join(", ")}`;
+  return `${failure.step}: ${failure.error}`;
+}
+
 export function RunsTable({ runs }: { runs: RunSummary[] }) {
   if (runs.length === 0) {
     return <p className="text-sm text-zinc-500">No runs yet.</p>;
@@ -19,6 +27,7 @@ export function RunsTable({ runs }: { runs: RunSummary[] }) {
           <th className="py-1.5 pr-4 font-medium">Created</th>
           <th className="py-1.5 pr-4 font-medium">Status</th>
           <th className="py-1.5 pr-4 font-medium">Category</th>
+          <th className="py-1.5 pr-4 font-medium">Failure</th>
           <th className="py-1.5 pr-4 font-medium">Quality retries</th>
           <th className="py-1.5 pr-4 font-medium">Transport retries</th>
           <th className="py-1.5 pr-4 font-medium">Latency</th>
@@ -32,6 +41,7 @@ export function RunsTable({ runs }: { runs: RunSummary[] }) {
               <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[run.status]}`}>{run.status}</span>
             </td>
             <td className="py-1.5 pr-4">{run.category}</td>
+            <td className="py-1.5 pr-4">{formatFailure(run.failure)}</td>
             <td className="py-1.5 pr-4">{run.quality_retries}</td>
             <td className="py-1.5 pr-4">{run.transport_retries}</td>
             <td className="py-1.5 pr-4">{run.latency_ms !== null ? `${run.latency_ms} ms` : "—"}</td>
