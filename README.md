@@ -67,6 +67,29 @@ without spending it, `.env.local.example` has a commented-out block that points 
 (via [Groq](https://console.groq.com)'s free tier) instead. This never takes effect in a
 production build regardless of those variables being set — see D26 in `DECISIONS.md`.
 
+## Evaluation harness (Stage 2)
+
+```bash
+# set EVAL_TOKEN in .env.local first — see .env.local.example
+npm run dev   # in one terminal
+
+# in another terminal, against that running target:
+npm run eval -- generate --target http://localhost:3000 --label "baseline" --repeats 3 --set-baseline
+npm run eval -- generate --target http://localhost:3000 --label "naming-degraded" --repeats 3 --prompt-variant naming=degraded
+npm run eval -- compare --run <the naming-degraded eval run's id>
+```
+
+Runs the 20-case fixture (`lib/eval/fixture.ts`) against a live target over HTTP — the same
+`/api/generate` a browser calls, authenticated as eval traffic via `EVAL_TOKEN` (see `DECISIONS.md`
+D27), so it bypasses the per-IP/global rate limits meant for real users. Each case × repeat is
+scored (a judge model rates relevance/distinctiveness) and persisted as it completes, so an
+interrupted run can continue later with `--resume <eval_run_id>` instead of starting over. Results
+show up under the app's own "Under the hood" tab once `finished_at` is set.
+
+The `--prompt-variant naming=degraded` run above is the sensitivity proof (`PRD.md` M4): it swaps
+in a deliberately worse naming prompt and `compare` should flag it as a distinctiveness regression
+— if it doesn't, don't trust any other comparison until that's understood.
+
 ## Moderation
 
 There's no admin UI for removing a generation from the public gallery. Hide one manually:

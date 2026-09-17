@@ -355,6 +355,23 @@ ESLint `no-restricted-imports` enforces the domain, contracts, and services rule
 
 ---
 
+### D27 — Eval traffic is admitted by a shared-secret header, not a separate endpoint, and bypasses rate limits by construction
+**Added 2026-09-17.**
+
+**Decision:** `POST /api/generate` accepts `X-Eval-Token` (must equal `EVAL_TOKEN`, constant-time compared), `X-Eval-Run-Id` (must reference an existing `eval_runs` row), and an optional `X-Eval-Prompt-Variant` (only `naming=degraded` exists, for the D18 sensitivity proof). A valid token admits the request as `source: "eval"` and skips `checkRateLimit` (D16) entirely — `runs`/`countRuns` already filter `source = user` for the per-IP and global caps, so this just makes an existing exemption explicit rather than leaving it as an accidental side effect of how those queries happen to be written. `EVAL_TOKEN` unset (the deployed public demo's default, Stage 3) means the target accepts no eval traffic at all, full stop.
+
+**Why:**
+- No separate `POST /api/eval/run` (already rejected in D3) means the harness has to go through the same admission path a browser uses — a header-based auth scheme is the minimal addition that lets it identify itself without a second endpoint.
+- Bypassing rate limits has to be intentional and gated, not implicit: an eval run of 20 cases × 3 repeats is 60+ generations, which would blow through the default 10/hour, 50/day caps sized for real public traffic (D16) in minutes. The alternative — raising those caps to accommodate eval traffic — would just as directly undermine the reason they exist (bounding the shared free-tier quota, PRD M6).
+- The sensitivity proof (PRD M4) needs a way to run the *exact* live pipeline with one prompt swapped, not a hand-maintained parallel copy of `runGeneration` that could drift from the real one. Threading an optional `namingAgentOverride` through `RunGenerationInput` (only ever set from this one header, never reachable from the live UI) keeps the degraded variant honestly running through the same guardrails, retry logic, and persistence as a real request.
+
+**Rejected:**
+- *A static allowlist of IPs/hosts instead of a token* — doesn't work against a deployed target the CLI reaches over the public internet, and is harder to rotate than an env var.
+- *A JWT or signed request instead of a shared secret* — this is a single first-party CLI talking to a target the same operator controls; a shared secret is the right amount of mechanism, not less secure for this threat model (a leaked `EVAL_TOKEN` lets someone burn quota, not access user data).
+- *Giving the CLI its own service-role DB credentials and writing runs directly, skipping HTTP* — would stop testing the deployed system as a black box (D3's whole point) and would need the CLI to reimplement admission/guardrail logic it should be verifying, not bypassing.
+
+---
+
 ## Open items — need a human
 1. **Quota numbers.** Read the project's requests-per-minute and requests-per-day for both models on the AI Studio rate-limit page, then set `GLOBAL_DAILY_GENERATION_CAP` ≤ RPD ÷ 6 (worst case: 3 steps × 2 attempts).
 2. **Feasibility numbers.** Seed values are labelled illustrative but need a plausibility pass.

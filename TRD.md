@@ -437,17 +437,18 @@ A valid token admits the request as `source: "eval"` and **skips `checkRateLimit
 ```
 app/
   page.tsx                          # tabs: Generate · Gallery · Under the hood
-  api/{generate,categories,products,brands/[id],runs}/route.ts
+  api/{generate,categories,products,brands/[id],runs,eval/summary}/route.ts
 components/                         # generate/, gallery/, runs/, ui/
 lib/
   contracts/                        # Zod API contracts shared with the browser
   domain/                           # agents, prompts, guardrails, nameSelection, feasibility, result
   services/                         # ports, runGeneration, runStep, admission (rate limits)
-  adapters/                         # gemini/, postgres/, env
+  adapters/                         # gemini/, qwen/, postgres/, createLlmClient, env
   client/                           # NDJSON reader, generation state reducer
+  eval/                             # Stage 2: fixture, judge, runner, metrics, stats, aggregate
 config/                             # routing, limits, word lists
 db/                                 # migrations/, seed.sql
-scripts/                            # migrate, seed, check-models, observe-stream
+scripts/                            # migrate, seed, check-models, observe-stream, eval
 tests/                              # unit/, integration/
 ```
 
