@@ -11,6 +11,7 @@
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts",
     "check-models": "tsx scripts/check-models.ts",
+    "eval": "tsx scripts/eval.ts",
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration"
   },

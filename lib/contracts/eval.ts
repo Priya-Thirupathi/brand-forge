@@ -100,7 +100,9 @@ export const EvalComparisonSchema = z.object({
   relevance: MetricDeltaSchema,
   distinctiveness: MetricDeltaSchema,
   outcome_match_rate: MetricDeltaSchema,
-  latency_ms_p50: MetricDeltaSchema,
+  // Paired per fixture case (D18) using each case's *mean* latency across its repeats, not a
+  // literal p50 — true percentiles live on EvalAggregate.latency_ms_p50/p95 for the whole run.
+  latency_ms: MetricDeltaSchema,
 });
 export type EvalComparison = z.infer<typeof EvalComparisonSchema>;
 

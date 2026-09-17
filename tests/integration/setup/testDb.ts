@@ -12,7 +12,7 @@ export const testPool = new Pool({ connectionString });
 
 export async function resetDb(): Promise<void> {
   await testPool.query(
-    "truncate table run_steps, runs, products, brands, feasibility_options, categories restart identity cascade",
+    "truncate table eval_results, eval_runs, run_steps, runs, products, brands, feasibility_options, categories restart identity cascade",
   );
 }
 

@@ -271,8 +271,8 @@ describe("createPostgresGenerationStore", () => {
   });
 
   describe("row level security", () => {
-    it("is enabled on every table in the Stage 1 schema", async () => {
-      const tables = ["categories", "feasibility_options", "brands", "products", "runs", "run_steps"];
+    it("is enabled on every table in the schema", async () => {
+      const tables = ["categories", "feasibility_options", "brands", "products", "runs", "run_steps", "eval_runs", "eval_results"];
       const { rows } = await testPool.query<{ relname: string; relrowsecurity: boolean }>(
         "select relname, relrowsecurity from pg_class where relnamespace = 'public'::regnamespace and relname = any($1)",
         [tables],

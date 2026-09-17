@@ -11,21 +11,28 @@ export interface NewEvalRun {
   gitSha: string;
   target: string;
   fixtureVersion: string;
-  promptVersions: Partial<Record<StepName, string>>;
-  models: Partial<Record<StepName, string>> & { judge?: string };
   repeats: number;
 }
 
+export type EvalRunModels = Partial<Record<StepName, string>> & { judge?: string };
+
 // `POST /api/generate`'s `X-Eval-Run-Id` must reference a row created here first (TRD.md §8) —
-// the CLI always calls this before its first case.
+// the CLI always calls this before its first case. `prompt_versions`/`models` aren't known yet
+// (they come from the first case's GenerateResult.meta) — left at their '{}'::jsonb default
+// (migration 0004) and filled in by setEvalRunMeta once the first result arrives.
 export async function createEvalRun(pool: Pool, run: NewEvalRun): Promise<string> {
   const { rows } = await pool.query<{ id: string }>(
-    `insert into eval_runs (label, git_sha, target, fixture_version, prompt_versions, models, repeats)
-     values ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7)
+    `insert into eval_runs (label, git_sha, target, fixture_version, repeats)
+     values ($1, $2, $3, $4, $5)
      returning id`,
-    [run.label, run.gitSha, run.target, run.fixtureVersion, JSON.stringify(run.promptVersions), JSON.stringify(run.models), run.repeats],
+    [run.label, run.gitSha, run.target, run.fixtureVersion, run.repeats],
   );
   return rows[0].id;
+}
+
+// Filled in once, from the first case's GenerateResult — a no-op if called again (TRD.md §4).
+export async function setEvalRunMeta(pool: Pool, id: string, meta: { promptVersions: Partial<Record<StepName, string>>; models: EvalRunModels }): Promise<void> {
+  await pool.query(`update eval_runs set prompt_versions = $2::jsonb, models = $3::jsonb where id = $1`, [id, JSON.stringify(meta.promptVersions), JSON.stringify(meta.models)]);
 }
 
 export async function evalRunExists(pool: Pool, id: string): Promise<boolean> {
@@ -105,7 +112,7 @@ interface EvalRunRow {
   target: string;
   fixture_version: string;
   prompt_versions: Partial<Record<StepName, string>>;
-  models: Partial<Record<StepName, string>>;
+  models: EvalRunModels;
   repeats: number;
   is_baseline: boolean;
   aggregate: EvalAggregate | null;
