@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: brandforge
+          POSTGRES_PASSWORD: brandforge
+          POSTGRES_DB: brandforge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U brandforge -d brandforge"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      # No separate test database here (unlike local dev's manually created brandforge_test,
+      # TRD.md §11) — this Postgres container is ephemeral and only used for this job, so
+      # DATABASE_URL and TEST_DATABASE_URL point at the same service-container database.
+      DATABASE_URL: postgresql://brandforge:brandforge@localhost:5432/brandforge
+      TEST_DATABASE_URL: postgresql://brandforge:brandforge@localhost:5432/brandforge
+      IP_HASH_SALT: ci-only-salt-not-for-production-use
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run migrate
+      - run: npm run test:integration
