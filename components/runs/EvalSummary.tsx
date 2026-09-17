@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { EvalRunSummary } from "@/lib/contracts/eval";
+import { Badge } from "@/components/ui/Badge";
 
 function formatPct(value: number | null): string {
   return value === null ? "—" : `${(value * 100).toFixed(0)}%`;
@@ -18,10 +19,10 @@ function ComparisonBadges({ comparison }: { comparison: EvalRunSummary["comparis
   if (!comparison) return null;
   const flagged = Object.entries(comparison).filter(([key, value]) => key !== "baseline_eval_run_id" && typeof value === "object" && "flagged" in value && value.flagged);
   if (flagged.length === 0) {
-    return <span className="text-xs text-zinc-500">vs. baseline: no flagged changes</span>;
+    return <span className="text-xs text-muted">vs. baseline: no flagged changes</span>;
   }
   return (
-    <span className="text-xs text-amber-700 dark:text-amber-400">
+    <span className="inline-flex items-center gap-1.5 text-xs text-warning">
       vs. baseline: flagged {flagged.map(([name]) => name.replace(/_/g, " ")).join(", ")}
     </span>
   );
@@ -38,44 +39,48 @@ export function EvalSummary() {
       .catch(() => setError("Could not load eval runs."));
   }, []);
 
-  if (error) return <p className="text-sm text-red-600 dark:text-red-400">{error}</p>;
-  if (!runs) return <p className="text-sm text-zinc-500">Loading…</p>;
+  if (error) return <p className="text-sm text-danger">{error}</p>;
+  if (!runs) return <p className="text-sm text-muted">Loading…</p>;
   if (runs.length === 0) {
-    return <p className="text-sm text-zinc-500">No eval runs yet — see README.md for `npm run eval -- generate`.</p>;
+    return <p className="text-sm text-muted">No eval runs yet — see README.md for `npm run eval -- generate`.</p>;
   }
 
   return (
-    <table className="w-full text-left text-sm">
-      <thead className="text-zinc-500">
-        <tr>
-          <th className="py-1.5 pr-4 font-medium">Label</th>
-          <th className="py-1.5 pr-4 font-medium">Created</th>
-          <th className="py-1.5 pr-4 font-medium">Outcome match</th>
-          <th className="py-1.5 pr-4 font-medium">Relevance</th>
-          <th className="py-1.5 pr-4 font-medium">Distinctiveness</th>
-          <th className="py-1.5 pr-4 font-medium">Latency p50</th>
-          <th className="py-1.5 pr-4 font-medium">Comparison</th>
-        </tr>
-      </thead>
-      <tbody>
-        {runs.map((run) => (
-          <tr key={run.id} className="border-t border-zinc-200 dark:border-zinc-800">
-            <td className="py-1.5 pr-4">
-              {run.label}
-              {run.is_baseline && <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">baseline</span>}
-              {!run.finished_at && <span className="ml-2 rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700 dark:bg-blue-950 dark:text-blue-300">in progress</span>}
-            </td>
-            <td className="py-1.5 pr-4">{new Date(run.created_at).toLocaleString()}</td>
-            <td className="py-1.5 pr-4">{formatPct(run.aggregate?.outcome_match_rate ?? null)}</td>
-            <td className="py-1.5 pr-4">{formatScore(run.aggregate?.mean_relevance ?? null)}</td>
-            <td className="py-1.5 pr-4">{formatScore(run.aggregate?.mean_distinctiveness ?? null)}</td>
-            <td className="py-1.5 pr-4">{run.aggregate?.latency_ms_p50 ? `${run.aggregate.latency_ms_p50}ms` : "—"}</td>
-            <td className="py-1.5 pr-4">
-              <ComparisonBadges comparison={run.comparison} />
-            </td>
+    <div className="overflow-x-auto rounded-xl border border-line bg-surface">
+      <table className="w-full text-left text-sm">
+        <thead className="text-xs text-muted">
+          <tr>
+            <th className="px-4 py-2.5 font-medium">Label</th>
+            <th className="px-4 py-2.5 font-medium">Created</th>
+            <th className="px-4 py-2.5 font-medium">Outcome match</th>
+            <th className="px-4 py-2.5 font-medium">Relevance</th>
+            <th className="px-4 py-2.5 font-medium">Distinctiveness</th>
+            <th className="px-4 py-2.5 font-medium">Latency p50</th>
+            <th className="px-4 py-2.5 font-medium">Comparison</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {runs.map((run) => (
+            <tr key={run.id} className="border-t border-line">
+              <td className="px-4 py-2.5">
+                <span className="inline-flex items-center gap-2">
+                  {run.label}
+                  {run.is_baseline && <Badge variant="neutral">baseline</Badge>}
+                  {!run.finished_at && <Badge variant="info">in progress</Badge>}
+                </span>
+              </td>
+              <td className="px-4 py-2.5 font-mono text-[13px] text-muted">{new Date(run.created_at).toLocaleString()}</td>
+              <td className="px-4 py-2.5 font-mono text-[13px] tabular-nums">{formatPct(run.aggregate?.outcome_match_rate ?? null)}</td>
+              <td className="px-4 py-2.5 font-mono text-[13px] tabular-nums">{formatScore(run.aggregate?.mean_relevance ?? null)}</td>
+              <td className="px-4 py-2.5 font-mono text-[13px] tabular-nums">{formatScore(run.aggregate?.mean_distinctiveness ?? null)}</td>
+              <td className="px-4 py-2.5 font-mono text-[13px] tabular-nums">{run.aggregate?.latency_ms_p50 ? `${run.aggregate.latency_ms_p50}ms` : "—"}</td>
+              <td className="px-4 py-2.5">
+                <ComparisonBadges comparison={run.comparison} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

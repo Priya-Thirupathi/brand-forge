@@ -1,4 +1,5 @@
 import type { GenerateResult } from "@/lib/contracts/generate";
+import { Badge } from "@/components/ui/Badge";
 
 // Only meaningful for a succeeded result — brand/product/name_candidates are all optional in
 // GenerateResultSchema because a rejected/errored run never reaches naming's persisted output.
@@ -7,41 +8,48 @@ export function ResultCard({ result }: { result: GenerateResult }) {
   const { brand, product, name_candidates: nameCandidates } = result;
 
   return (
-    <div className="flex flex-col gap-4 rounded border border-zinc-200 p-5 dark:border-zinc-800">
+    <div className="flex flex-col gap-5 rounded-xl border border-line bg-surface p-6 shadow-[0_1px_0_0_var(--color-accent)]">
       <div>
-        <h3 className="text-2xl font-semibold">{brand.name}</h3>
-        <p className="mt-1 text-lg text-zinc-700 dark:text-zinc-300">{product.tagline}</p>
+        <h3 className="text-2xl font-semibold tracking-tight">{brand.name}</h3>
+        <p className="mt-1 text-lg text-muted">{product.tagline}</p>
       </div>
 
       {nameCandidates && nameCandidates.length > 1 && (
-        <div className="text-sm">
-          <span className="font-medium">Alternate names: </span>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="font-medium text-muted">Also considered</span>
           {nameCandidates
             .filter((c) => !c.selected)
-            .map((c) => c.name)
-            .join(", ")}
+            .map((c) => (
+              <Badge key={c.name} variant="neutral">
+                {c.name}
+              </Badge>
+            ))}
         </div>
       )}
 
-      <p className="text-sm text-zinc-700 dark:text-zinc-300">{product.description}</p>
+      <p className="text-sm leading-relaxed">{product.description}</p>
 
-      <div className="rounded bg-zinc-50 p-4 text-sm dark:bg-zinc-900">
+      <div className="rounded-lg border border-line bg-bg p-4 text-sm">
         <p className="font-medium">{product.packaging.headline}</p>
-        <p className="mt-1 text-zinc-700 dark:text-zinc-300">{product.packaging.body}</p>
-        <ul className="mt-2 flex flex-wrap gap-2">
+        <p className="mt-1.5 leading-relaxed text-muted">{product.packaging.body}</p>
+        <ul className="mt-3 flex flex-wrap gap-2">
           {product.packaging.callouts.map((callout, i) => (
-            <li key={i} className="rounded-full bg-zinc-200 px-2.5 py-0.5 text-xs dark:bg-zinc-800">
-              {callout}
+            <li key={i}>
+              <Badge variant="accent">{callout}</Badge>
             </li>
           ))}
         </ul>
       </div>
 
-      <div className="text-sm">
-        <span className="font-medium">Voice: </span>
-        {brand.tone_notes.voice.join(", ")}
-        <span className="ml-4 font-medium">Audience: </span>
-        {brand.tone_notes.audience}
+      <div className="flex flex-col gap-1 text-sm text-muted sm:flex-row sm:gap-6">
+        <span>
+          <span className="font-medium text-ink">Voice </span>
+          {brand.tone_notes.voice.join(", ")}
+        </span>
+        <span>
+          <span className="font-medium text-ink">Audience </span>
+          {brand.tone_notes.audience}
+        </span>
       </div>
     </div>
   );

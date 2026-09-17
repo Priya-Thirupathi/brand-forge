@@ -1,10 +1,11 @@
 import type { RunSummary } from "@/lib/contracts/runs";
+import { Badge, type BadgeVariant } from "@/components/ui/Badge";
 
-const STATUS_STYLES: Record<RunSummary["status"], string> = {
-  running: "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300",
-  succeeded: "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300",
-  rejected: "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300",
-  error: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
+const STATUS_VARIANT: Record<RunSummary["status"], BadgeVariant> = {
+  running: "info",
+  succeeded: "success",
+  rejected: "warning",
+  error: "danger",
 };
 
 // RunSummary.failure is one of two shapes (TRD.md §4/§8): a guardrail rejection names rule
@@ -17,39 +18,41 @@ function formatFailure(failure: RunSummary["failure"]): string {
 
 export function RunsTable({ runs }: { runs: RunSummary[] }) {
   if (runs.length === 0) {
-    return <p className="text-sm text-zinc-500">No runs yet.</p>;
+    return <p className="text-sm text-muted">No runs yet.</p>;
   }
 
   return (
-    <table className="w-full text-left text-sm">
-      <thead className="text-zinc-500">
-        <tr>
-          <th className="py-1.5 pr-4 font-medium">Created</th>
-          <th className="py-1.5 pr-4 font-medium">Status</th>
-          <th className="py-1.5 pr-4 font-medium">Category</th>
-          <th className="py-1.5 pr-4 font-medium">Resumed from</th>
-          <th className="py-1.5 pr-4 font-medium">Failure</th>
-          <th className="py-1.5 pr-4 font-medium">Quality retries</th>
-          <th className="py-1.5 pr-4 font-medium">Transport retries</th>
-          <th className="py-1.5 pr-4 font-medium">Latency</th>
-        </tr>
-      </thead>
-      <tbody>
-        {runs.map((run) => (
-          <tr key={run.id} className="border-t border-zinc-200 dark:border-zinc-800">
-            <td className="py-1.5 pr-4">{new Date(run.created_at).toLocaleString()}</td>
-            <td className="py-1.5 pr-4">
-              <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[run.status]}`}>{run.status}</span>
-            </td>
-            <td className="py-1.5 pr-4">{run.category}</td>
-            <td className="py-1.5 pr-4 font-mono text-xs">{run.resumed_from_run_id ? run.resumed_from_run_id.slice(0, 8) : "—"}</td>
-            <td className="py-1.5 pr-4">{formatFailure(run.failure)}</td>
-            <td className="py-1.5 pr-4">{run.quality_retries}</td>
-            <td className="py-1.5 pr-4">{run.transport_retries}</td>
-            <td className="py-1.5 pr-4">{run.latency_ms !== null ? `${run.latency_ms} ms` : "—"}</td>
+    <div className="overflow-x-auto rounded-xl border border-line bg-surface">
+      <table className="w-full text-left text-sm">
+        <thead className="text-xs text-muted">
+          <tr>
+            <th className="px-4 py-2.5 font-medium">Created</th>
+            <th className="px-4 py-2.5 font-medium">Status</th>
+            <th className="px-4 py-2.5 font-medium">Category</th>
+            <th className="px-4 py-2.5 font-medium">Resumed from</th>
+            <th className="px-4 py-2.5 font-medium">Failure</th>
+            <th className="px-4 py-2.5 font-medium">Quality retries</th>
+            <th className="px-4 py-2.5 font-medium">Transport retries</th>
+            <th className="px-4 py-2.5 font-medium">Latency</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody className="font-mono text-[13px] tabular-nums">
+          {runs.map((run) => (
+            <tr key={run.id} className="border-t border-line">
+              <td className="px-4 py-2">{new Date(run.created_at).toLocaleString()}</td>
+              <td className="px-4 py-2">
+                <Badge variant={STATUS_VARIANT[run.status]}>{run.status}</Badge>
+              </td>
+              <td className="px-4 py-2">{run.category}</td>
+              <td className="px-4 py-2 text-muted">{run.resumed_from_run_id ? run.resumed_from_run_id.slice(0, 8) : "—"}</td>
+              <td className="px-4 py-2">{formatFailure(run.failure)}</td>
+              <td className="px-4 py-2">{run.quality_retries}</td>
+              <td className="px-4 py-2">{run.transport_retries}</td>
+              <td className="px-4 py-2">{run.latency_ms !== null ? `${run.latency_ms} ms` : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

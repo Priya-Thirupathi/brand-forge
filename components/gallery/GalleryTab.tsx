@@ -33,13 +33,13 @@ export function GalleryTab() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       <label className="flex items-center gap-2 text-sm">
         <span className="font-medium">Category</span>
         <select
           value={categorySlug}
           onChange={(e) => handleCategoryChange(e.target.value)}
-          className="rounded border border-zinc-300 px-3 py-1.5 dark:border-zinc-700 dark:bg-zinc-900"
+          className="rounded-lg border border-line bg-surface px-3 py-1.5 outline-none transition-colors focus:border-accent"
         >
           <option value="">All</option>
           {categories.map((c) => (
@@ -50,8 +50,8 @@ export function GalleryTab() {
         </select>
       </label>
 
-      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-      {!error && !products && <p className="text-sm text-zinc-500">Loading…</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
+      {!error && !products && <p className="text-sm text-muted">Loading…</p>}
       {products && <Gallery products={products} />}
     </div>
   );

@@ -22,13 +22,15 @@ interface QuotaNoticeProps {
 
 export function QuotaNotice({ message, retryAfterS, code }: QuotaNoticeProps) {
   return (
-    <div className="rounded border border-red-300 bg-red-50 p-4 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
+    <div className="rounded-xl border border-danger/30 bg-danger-soft p-4 text-sm text-danger-soft-ink">
       <p>{code ? RUN_ERROR_MESSAGES[code] : message}</p>
-      {retryAfterS !== undefined && <p className="mt-1 text-xs">Try again in about {retryAfterS}s.</p>}
+      {retryAfterS !== undefined && (
+        <p className="mt-1 font-mono text-xs tabular-nums opacity-80">Try again in about {retryAfterS}s.</p>
+      )}
       {code && (
-        <details className="mt-2 text-xs opacity-75">
+        <details className="mt-2 text-xs opacity-80">
           <summary className="cursor-pointer">Technical details</summary>
-          <p className="mt-1 font-mono break-words">{message}</p>
+          <p className="mt-1 break-words font-mono">{message}</p>
         </details>
       )}
     </div>

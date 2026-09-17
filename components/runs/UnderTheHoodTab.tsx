@@ -17,15 +17,15 @@ export function UnderTheHoodTab() {
   }, []);
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-10">
       <section>
-        <h2 className="mb-3 text-lg font-semibold">Recent runs</h2>
-        {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-        {!error && !runs && <p className="text-sm text-zinc-500">Loading…</p>}
+        <h2 className="mb-3 text-lg font-semibold tracking-tight">Recent runs</h2>
+        {error && <p className="text-sm text-danger">{error}</p>}
+        {!error && !runs && <p className="text-sm text-muted">Loading…</p>}
         {runs && <RunsTable runs={runs} />}
       </section>
       <section>
-        <h2 className="mb-3 text-lg font-semibold">Evaluation</h2>
+        <h2 className="mb-3 text-lg font-semibold tracking-tight">Evaluation</h2>
         <EvalSummary />
       </section>
     </div>

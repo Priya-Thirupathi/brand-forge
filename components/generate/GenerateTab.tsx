@@ -29,7 +29,7 @@ export function GenerateTab() {
           {state.status === "succeeded" && <ResultCard result={state.result} />}
           {state.status === "rejected" && <RejectionNotice result={state.result} />}
           <GuardrailPanel result={state.result} />
-          <button type="button" onClick={reset} className="self-start text-sm font-medium underline underline-offset-2">
+          <button type="button" onClick={reset} className="self-start text-sm font-medium text-accent underline underline-offset-4 hover:opacity-80">
             Generate another
           </button>
         </div>
@@ -41,12 +41,12 @@ export function GenerateTab() {
             <button
               type="button"
               onClick={() => resume(state.runId, state.step)}
-              className="self-start rounded bg-zinc-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-300"
+              className="self-start rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-accent-ink hover:opacity-90"
             >
               Resume from {state.step.replace("_", " ")}
             </button>
           )}
-          <button type="button" onClick={reset} className="self-start text-sm font-medium underline underline-offset-2">
+          <button type="button" onClick={reset} className="self-start text-sm font-medium text-accent underline underline-offset-4 hover:opacity-80">
             {resumable ? "Start over instead" : "Try again"}
           </button>
         </div>

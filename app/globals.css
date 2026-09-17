@@ -1,26 +1,106 @@
 @import "tailwindcss";
 
+/* Design tokens. A cool, quiet neutral base (not the stock near-white/near-black scaffold
+   defaults) with one warm, confident accent — "forge ember" — reserved for primary actions and
+   emphasis, so it stays meaningful instead of decorative. Semantic status colors are tuned to
+   feel like one family rather than raw Tailwind swatches. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+  --color-bg: #f5f6f7;
+  --color-surface: #ffffff;
+  --color-ink: #12181c;
+  --color-muted: #5a6570;
+  --color-line: #dee2e5;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-accent: #c2621f;
+  --color-accent-ink: #ffffff;
+  --color-accent-soft: #fbe8d8;
+  --color-accent-soft-ink: #7a3f13;
+
+  --color-success: #2f6b4c;
+  --color-success-soft: #dcefe3;
+  --color-success-soft-ink: #1f4d36;
+
+  --color-warning: #93650f;
+  --color-warning-soft: #f7e7c8;
+  --color-warning-soft-ink: #6b4a0b;
+
+  --color-danger: #a8342f;
+  --color-danger-soft: #f7dfdc;
+  --color-danger-soft-ink: #7c221e;
+
+  --color-info: #33578f;
+  --color-info-soft: #dde7f7;
+  --color-info-soft-ink: #24406b;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --color-bg: #111417;
+    --color-surface: #191d21;
+    --color-ink: #edeff0;
+    --color-muted: #8b96a0;
+    --color-line: #2a3037;
+
+    --color-accent: #e8934f;
+    --color-accent-ink: #1c1108;
+    --color-accent-soft: #3a2716;
+    --color-accent-soft-ink: #f3c896;
+
+    --color-success: #6fbe97;
+    --color-success-soft: #172b22;
+    --color-success-soft-ink: #9cd9b8;
+
+    --color-warning: #e3b04d;
+    --color-warning-soft: #2e2410;
+    --color-warning-soft-ink: #f0cd85;
+
+    --color-danger: #e2726b;
+    --color-danger-soft: #2e1614;
+    --color-danger-soft-ink: #f0a29c;
+
+    --color-info: #7aa6ec;
+    --color-info-soft: #14202f;
+    --color-info-soft-ink: #a9c6f2;
   }
 }
 
+@theme inline {
+  --color-bg: var(--color-bg);
+  --color-surface: var(--color-surface);
+  --color-ink: var(--color-ink);
+  --color-muted: var(--color-muted);
+  --color-line: var(--color-line);
+
+  --color-accent: var(--color-accent);
+  --color-accent-ink: var(--color-accent-ink);
+  --color-accent-soft: var(--color-accent-soft);
+  --color-accent-soft-ink: var(--color-accent-soft-ink);
+
+  --color-success: var(--color-success);
+  --color-success-soft: var(--color-success-soft);
+  --color-success-soft-ink: var(--color-success-soft-ink);
+  --color-warning: var(--color-warning);
+  --color-warning-soft: var(--color-warning-soft);
+  --color-warning-soft-ink: var(--color-warning-soft-ink);
+  --color-danger: var(--color-danger);
+  --color-danger-soft: var(--color-danger-soft);
+  --color-danger-soft-ink: var(--color-danger-soft-ink);
+  --color-info: var(--color-info);
+  --color-info-soft: var(--color-info-soft);
+  --color-info-soft-ink: var(--color-info-soft-ink);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-soft-ink);
 }
