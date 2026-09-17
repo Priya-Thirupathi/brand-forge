@@ -15,11 +15,11 @@ describe("checkRateLimit", () => {
 
   it("reaches the daily cap once the global count reaches the cap", () => {
     const decision = checkRateLimit({ ipRunsInLastHour: 0, globalRunsInLast24h: 50 }, config);
-    expect(decision).toEqual({ allowed: false, reason: "daily_cap_reached" });
+    expect(decision).toEqual({ allowed: false, reason: "daily_cap_reached", retryAfterS: 86_400 });
   });
 
   it("prefers the daily cap reason when both limits are exceeded", () => {
     const decision = checkRateLimit({ ipRunsInLastHour: 10, globalRunsInLast24h: 50 }, config);
-    expect(decision).toEqual({ allowed: false, reason: "daily_cap_reached" });
+    expect(decision).toEqual({ allowed: false, reason: "daily_cap_reached", retryAfterS: 86_400 });
   });
 });

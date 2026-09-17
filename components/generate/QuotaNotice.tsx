@@ -20,13 +20,21 @@ interface QuotaNoticeProps {
   code?: GenerateErrorCode;
 }
 
+// retryAfterS is a safe upper bound, not a precise moment (rateLimitPolicy.ts) — "about 1
+// hour" reads as the estimate it is; raw seconds ("about 3600s") reads as a bug.
+function formatRetryAfter(seconds: number): string {
+  if (seconds < 90) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) return `${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  return `${hours} hour${hours === 1 ? "" : "s"}`;
+}
+
 export function QuotaNotice({ message, retryAfterS, code }: QuotaNoticeProps) {
   return (
     <div className="rounded-xl border border-danger/30 bg-danger-soft p-4 text-sm text-danger-soft-ink">
       <p>{code ? RUN_ERROR_MESSAGES[code] : message}</p>
-      {retryAfterS !== undefined && (
-        <p className="mt-1 font-mono text-xs tabular-nums opacity-80">Try again in about {retryAfterS}s.</p>
-      )}
+      {retryAfterS !== undefined && <p className="mt-1 text-xs opacity-80">Try again in about {formatRetryAfter(retryAfterS)}.</p>}
       {code && (
         <details className="mt-2 text-xs opacity-80">
           <summary className="cursor-pointer">Technical details</summary>

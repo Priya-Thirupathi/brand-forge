@@ -122,7 +122,11 @@ export async function POST(request: NextRequest) {
           retry_after_s: rateLimitDecision.retryAfterS,
         });
       }
-      return errorResponse("daily_cap_reached", "The daily generation limit has been reached. Try again tomorrow.", 429);
+      // Not a calendar-day reset — a rolling 24h window that eases gradually as old runs age
+      // out (see rateLimitPolicy.ts). "Tomorrow" would overpromise; "in a while" is honest.
+      return errorResponse("daily_cap_reached", "The daily generation limit has been reached. Try again in a while — it eases gradually, not at a fixed time.", 429, {
+        retry_after_s: rateLimitDecision.retryAfterS,
+      });
     }
   }
 
