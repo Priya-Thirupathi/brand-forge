@@ -2,20 +2,29 @@ import { z } from "zod";
 import { NextResponse, type NextRequest } from "next/server";
 import { pool } from "@/lib/adapters/postgres/pool";
 import { createLlmClient } from "@/lib/adapters/createLlmClient";
-import { createEvalRun, evalRunExists, finishEvalRun, listEvalResults, setBaseline } from "@/lib/adapters/postgres/evalStore";
+import { countEvalResults, createEvalRun, finishEvalRun, getEvalRun, getLastResultTimestamp, listEvalResults, setBaseline } from "@/lib/adapters/postgres/evalStore";
 import { computeAggregate } from "@/lib/eval/aggregate";
 import { runEvalFixture } from "@/lib/eval/runner";
-import { FIXTURE_VERSION } from "@/lib/eval/fixture";
+import { FIXTURE_CASES, FIXTURE_VERSION } from "@/lib/eval/fixture";
 import { errorResponse, validationErrorResponse } from "../../_shared/response";
 import { evalTokenMatches } from "../../_shared/evalAuth";
 
-// Triggers a full fixture run from the app itself, instead of only from the CLI. This reverses
-// part of D3's original "no POST /api/eval/run" call — see DECISIONS.md D3 for why, and its
-// important caveat: the run continues in the background *after* this handler returns, which
-// only actually keeps executing on a persistent Node process (`next dev`, or a self-hosted
-// `next start`). On Vercel's serverless functions specifically, compute is not guaranteed to
-// continue past the response — this endpoint is not yet safe to expose there unqualified.
+// Triggers a fixture run from the app itself, instead of only from the CLI. This reverses part
+// of D3's original "no POST /api/eval/run" call — see DECISIONS.md D3 for why.
+//
+// D3's Vercel fix: this handler no longer fires the run as a background task and returns early
+// (that only kept executing on a persistent Node process, never guaranteed on Vercel serverless).
+// Instead every call is a bounded, *awaited* chunk — usually one case × repeat — that returns
+// once it's done or once continuing would run past CHUNK_BUDGET_MS. The caller (EvalRunForm)
+// drives the run forward by re-calling with `resume_eval_run_id` until the response says
+// "completed". rpm pacing survives across those separate invocations via `getLastResultTimestamp`
+// seeding the pacer's clock, since each call is otherwise a fresh process with no memory of it.
 export const maxDuration = 30;
+
+// Small on purpose: combined with rpm pacing (seeded from the last persisted result), this makes
+// a chunk advance the fixture by about one case × repeat, leaving headroom under `maxDuration`
+// for that one call's worst case (the app's own 25s per-run deadline).
+const CHUNK_BUDGET_MS = 3_000;
 
 const RequestSchema = z.object({
   label: z.string().min(1).max(200).optional(),
@@ -38,18 +47,24 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return validationErrorResponse(parsed.error);
   }
-  const { label, repeats, prompt_variant: promptVariant, set_baseline: setBaselineFlag, resume_eval_run_id: resumeId, rpm } = parsed.data;
+  const { label, prompt_variant: promptVariant, set_baseline: setBaselineFlag, resume_eval_run_id: resumeId, rpm } = parsed.data;
 
   let evalRunId: string;
+  let repeats: number;
   if (resumeId) {
-    if (!(await evalRunExists(pool, resumeId))) {
+    const existing = await getEvalRun(pool, resumeId);
+    if (!existing) {
       return errorResponse("unknown_eval_run", `No eval run ${resumeId}.`, 404);
     }
     evalRunId = resumeId;
+    // The run's own repeats, not whatever this particular chunk request happened to send —
+    // it was fixed when the run was created and must stay consistent across every chunk.
+    repeats = existing.repeats;
   } else {
     if (!label) {
       return errorResponse("invalid_input", "label is required unless resume_eval_run_id is given.", 400);
     }
+    repeats = parsed.data.repeats;
     evalRunId = await createEvalRun(pool, {
       label,
       gitSha: process.env.VERCEL_GIT_COMMIT_SHA ?? "dev",
@@ -59,51 +74,41 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  // Not awaited on purpose — see the module comment above. Errors are logged, not thrown,
-  // since there's no request left to report them to.
-  void runInBackground({
-    evalRunId,
+  const lastResultAt = await getLastResultTimestamp(pool, evalRunId);
+  const { completed, nextAvailableAt } = await runEvalFixture({
     target: request.nextUrl.origin,
     evalToken: token,
+    evalRunId,
     repeats,
     promptVariant,
     rpm: rpm ?? Number(process.env.EVAL_TARGET_RPM ?? 6),
-    setBaselineOnFinish: setBaselineFlag,
+    pool,
+    judgeClient: createLlmClient(),
+    deadlineMs: Date.now() + CHUNK_BUDGET_MS,
+    seedLastCallAt: lastResultAt?.getTime(),
   });
 
-  return NextResponse.json({ eval_run_id: evalRunId, status: "started" }, { status: 202 });
-}
+  const casesDone = await countEvalResults(pool, evalRunId);
+  const casesTotal = FIXTURE_CASES.length * repeats;
 
-interface BackgroundRunOptions {
-  evalRunId: string;
-  target: string;
-  evalToken: string;
-  repeats: number;
-  promptVariant?: string;
-  rpm: number;
-  setBaselineOnFinish: boolean;
-}
-
-async function runInBackground(options: BackgroundRunOptions): Promise<void> {
-  try {
-    await runEvalFixture({
-      target: options.target,
-      evalToken: options.evalToken,
-      evalRunId: options.evalRunId,
-      repeats: options.repeats,
-      promptVariant: options.promptVariant,
-      rpm: options.rpm,
-      pool,
-      judgeClient: createLlmClient(),
-    });
-
-    const results = await listEvalResults(pool, options.evalRunId);
-    await finishEvalRun(pool, options.evalRunId, computeAggregate(results));
-    if (options.setBaselineOnFinish) {
-      await setBaseline(pool, options.evalRunId);
-    }
-  } catch (error) {
-    // No request left to report this to once we're here — the server log is it.
-    console.error(`eval run ${options.evalRunId} failed`, error);
+  if (!completed) {
+    return NextResponse.json(
+      {
+        eval_run_id: evalRunId,
+        status: "in_progress",
+        cases_done: casesDone,
+        cases_total: casesTotal,
+        retry_after_ms: Math.max(0, (nextAvailableAt ?? Date.now()) - Date.now()),
+      },
+      { status: 202 },
+    );
   }
+
+  const results = await listEvalResults(pool, evalRunId);
+  await finishEvalRun(pool, evalRunId, computeAggregate(results));
+  if (setBaselineFlag) {
+    await setBaseline(pool, evalRunId);
+  }
+
+  return NextResponse.json({ eval_run_id: evalRunId, status: "completed", cases_done: casesDone, cases_total: casesTotal }, { status: 200 });
 }

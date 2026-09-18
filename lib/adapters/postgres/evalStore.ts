@@ -81,6 +81,18 @@ export async function insertEvalResult(pool: Pool, row: EvalResultRow): Promise<
   );
 }
 
+export async function countEvalResults(pool: Pool, evalRunId: string): Promise<number> {
+  const { rows } = await pool.query<{ count: string }>("select count(*) from eval_results where eval_run_id = $1", [evalRunId]);
+  return Number(rows[0].count);
+}
+
+// D3's chunked-run fix (POST /api/eval/run): a fresh serverless invocation has no in-memory
+// record of when the last case actually fired, so the rpm pacer is seeded from this instead.
+export async function getLastResultTimestamp(pool: Pool, evalRunId: string): Promise<Date | null> {
+  const { rows } = await pool.query<{ created_at: Date }>("select created_at from eval_results where eval_run_id = $1 order by created_at desc limit 1", [evalRunId]);
+  return rows[0]?.created_at ?? null;
+}
+
 export async function listEvalResults(pool: Pool, evalRunId: string): Promise<EvalResultRow[]> {
   const { rows } = await pool.query(
     `select eval_run_id, case_id, repeat, run_id, expected_outcome, actual_outcome, outcome_match,

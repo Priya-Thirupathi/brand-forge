@@ -26,6 +26,15 @@ export interface RunnerOptions {
   // Testability seams — default to the real fixture and the global fetch.
   fetchImpl?: typeof fetch;
   cases?: readonly EvalCase[];
+  // D3's Vercel fix: bounds one call to a single serverless invocation's wall-clock budget —
+  // when set, the loop stops *before* starting a case that couldn't begin until at/after this
+  // deadline, rather than running the whole fixture. Omitted (the CLI's own long-lived process)
+  // means run to completion, unchanged from before this option existed.
+  deadlineMs?: number;
+  // Seeds the rpm pacer's clock from a previous chunk's last real call — a fresh serverless
+  // invocation has no in-memory memory of when that was (unlike the CLI's single process), so
+  // without this a new chunk would always fire its first case immediately regardless of rpm.
+  seedLastCallAt?: number;
 }
 
 export type RunnerEvent =
@@ -33,8 +42,15 @@ export type RunnerEvent =
   | { type: "case_started"; caseId: string; repeat: number }
   | { type: "case_finished"; caseId: string; repeat: number; row: EvalResultRow };
 
-export async function runEvalFixture(options: RunnerOptions): Promise<void> {
-  const pace = createPacer(options.rpm);
+export interface RunFixtureResult {
+  completed: boolean;
+  // Only set when !completed: when the next not-yet-recorded case is allowed to start, per rpm
+  // pacing — lets a chunked caller tell its client how long to wait before asking for more.
+  nextAvailableAt?: number;
+}
+
+export async function runEvalFixture(options: RunnerOptions): Promise<RunFixtureResult> {
+  const pace = createPacer(options.rpm, options.seedLastCallAt);
   const doFetch = options.fetchImpl ?? fetch;
   const cases = options.cases ?? FIXTURE_CASES;
   let metaRecorded = false;
@@ -46,8 +62,13 @@ export async function runEvalFixture(options: RunnerOptions): Promise<void> {
         continue;
       }
 
+      const nextAvailableAt = pace.nextAvailableAt();
+      if (options.deadlineMs !== undefined && nextAvailableAt >= options.deadlineMs) {
+        return { completed: false, nextAvailableAt };
+      }
+
       options.onEvent?.({ type: "case_started", caseId: evalCase.id, repeat });
-      const throttled = await pace();
+      const throttled = await pace.wait();
       const { row, resultMeta } = await runOneCase(doFetch, options, evalCase, repeat, throttled);
       await insertEvalResult(options.pool, row);
 
@@ -62,6 +83,7 @@ export async function runEvalFixture(options: RunnerOptions): Promise<void> {
       options.onEvent?.({ type: "case_finished", caseId: evalCase.id, repeat, row });
     }
   }
+  return { completed: true };
 }
 
 interface CaseOutcomeData {
@@ -187,19 +209,32 @@ function buildRow(evalRunId: string, evalCase: EvalCase, repeat: number, data: C
   };
 }
 
+interface Pacer {
+  // When the next not-yet-made call is allowed to fire, without waiting for it.
+  nextAvailableAt(): number;
+  // Waits if needed, then commits to a call now. `throttled` reports whether it had to wait.
+  wait(): Promise<boolean>;
+}
+
 // RPM pacing, concurrency 1 (TRD.md §9): waits before a call only when the previous call was
-// less than a full interval ago. `throttled` reports whether *this* call actually had to wait.
-function createPacer(rpm: number): () => Promise<boolean> {
+// less than a full interval ago. `seedLastCallAt` lets a chunked caller (D3) carry the clock
+// across separate process invocations instead of restarting it at zero each time.
+function createPacer(rpm: number, seedLastCallAt?: number): Pacer {
   const minIntervalMs = 60_000 / rpm;
-  let lastCallAt = 0;
-  return async () => {
-    const now = Date.now();
-    const elapsed = lastCallAt === 0 ? Infinity : now - lastCallAt;
-    const throttled = elapsed < minIntervalMs;
-    if (throttled) {
-      await new Promise((resolve) => setTimeout(resolve, minIntervalMs - elapsed));
-    }
-    lastCallAt = Date.now();
-    return throttled;
+  let lastCallAt = seedLastCallAt ?? 0;
+  return {
+    nextAvailableAt() {
+      return lastCallAt === 0 ? Date.now() : lastCallAt + minIntervalMs;
+    },
+    async wait() {
+      const now = Date.now();
+      const elapsed = lastCallAt === 0 ? Infinity : now - lastCallAt;
+      const throttled = elapsed < minIntervalMs;
+      if (throttled) {
+        await new Promise((resolve) => setTimeout(resolve, minIntervalMs - elapsed));
+      }
+      lastCallAt = Date.now();
+      return throttled;
+    },
   };
 }

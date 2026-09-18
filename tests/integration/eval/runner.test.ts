@@ -103,6 +103,75 @@ describe("runEvalFixture", () => {
     expect(evalRun?.models.judge).toBeDefined();
   });
 
+  it("D3 chunked-run fix: stops before a deadline instead of running the whole fixture, and a later call resumes it", async () => {
+    const passRunId = await seedRun("succeeded");
+    const evalRunId = await createEvalRun(testPool, { label: "t", gitSha: "sha", target: "http://x", fixtureVersion: "v1", repeats: 1 });
+    const fetchImpl = fakeFetch(passRunId, passRunId);
+
+    // A deadline already in the past: the pacer's very first "next available" check trips it
+    // immediately, before any case runs — mirrors a chunk that arrives with no time budget left.
+    const first = await runEvalFixture({
+      target: "http://x",
+      evalToken: "tok",
+      evalRunId,
+      repeats: 1,
+      rpm: 1_000_000,
+      pool: testPool,
+      judgeClient: fakeJudge(0.9, 0.7),
+      fetchImpl,
+      cases: CASES,
+      deadlineMs: Date.now() - 1,
+    });
+    expect(first.completed).toBe(false);
+    expect(first.nextAvailableAt).toBeDefined();
+    expect(await listEvalResults(testPool, evalRunId)).toHaveLength(0);
+
+    // A later call with a real budget and no deadline finishes what's left — the same
+    // hasEvalResult skip a genuine --resume relies on picks up from nothing recorded.
+    const second = await runEvalFixture({
+      target: "http://x",
+      evalToken: "tok",
+      evalRunId,
+      repeats: 1,
+      rpm: 1_000_000,
+      pool: testPool,
+      judgeClient: fakeJudge(0.9, 0.7),
+      fetchImpl,
+      cases: CASES,
+    });
+    expect(second.completed).toBe(true);
+    expect(await listEvalResults(testPool, evalRunId)).toHaveLength(3);
+  });
+
+  it("D3 chunked-run fix: seedLastCallAt makes rpm pacing survive across separate calls", async () => {
+    const passRunId = await seedRun("succeeded");
+    const evalRunId = await createEvalRun(testPool, { label: "t", gitSha: "sha", target: "http://x", fixtureVersion: "v1", repeats: 1 });
+    const fetchImpl = fakeFetch(passRunId, passRunId);
+    const rpm = 60; // 1 call/second — small enough to assert on without a slow test
+
+    const seededLastCallAt = Date.now();
+    const result = await runEvalFixture({
+      target: "http://x",
+      evalToken: "tok",
+      evalRunId,
+      repeats: 1,
+      rpm,
+      pool: testPool,
+      judgeClient: fakeJudge(0.9, 0.7),
+      fetchImpl,
+      cases: [CASES[0]],
+      // A deadline that only a truly-unthrottled first call (seed ignored) could beat.
+      deadlineMs: seededLastCallAt + 500,
+      seedLastCallAt: seededLastCallAt,
+    });
+
+    // Without the seed, a fresh pacer would treat this as the very first call ever (unthrottled)
+    // and run it immediately, finishing well inside the deadline. With the seed applied, the
+    // pacer correctly treats "now" as under a minute since the last real call and defers.
+    expect(result.completed).toBe(false);
+    expect(await listEvalResults(testPool, evalRunId)).toHaveLength(0);
+  });
+
   it("skips a case x repeat that already has a row, without ever calling fetch for it", async () => {
     const passRunId = await seedRun("succeeded");
     const evalRunId = await createEvalRun(testPool, { label: "t", gitSha: "sha", target: "http://x", fixtureVersion: "v1", repeats: 1 });

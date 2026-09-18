@@ -380,17 +380,18 @@ A valid token admits the request as `source: "eval"` and **skips `checkRateLimit
 
 **`GET /api/eval/summary?label&limit`** → recent `eval_runs` (newest first, optionally filtered by `label`): `id, label, git_sha, created_at, finished_at, is_baseline, repeats, aggregate, comparison`. Never `eval_results` rows (that detail is for the CLI's own `compare` output, not the UI).
 
-**`POST /api/eval/run`** (D3, added 2026-09-17) — same `X-Eval-Token` auth as eval-sourced `/api/generate` calls, no admission bypass needed since this route doesn't touch guardrails/rate limits itself.
+**`POST /api/eval/run`** (D3, added 2026-09-17; chunked-run fix 2026-09-18) — same `X-Eval-Token` auth as eval-sourced `/api/generate` calls, no admission bypass needed since this route doesn't touch guardrails/rate limits itself. Each call is one bounded, awaited chunk (in practice ~one case × repeat) — not a fire-and-forget trigger — so it's safe on Vercel serverless (D3).
 ```ts
 // request
 { label?: string; repeats?: number;                 // default 1; label required unless resume_eval_run_id is set
   prompt_variant?: string; set_baseline?: boolean;   // e.g. "naming=degraded"; marks the run baseline once it finishes
-  resume_eval_run_id?: string; rpm?: number }         // continues an existing eval run instead of starting a new one
+  resume_eval_run_id?: string; rpm?: number }         // continues an existing eval run's next chunk instead of starting a new one
 
-// response, 202 — the run continues after this returns (see D3's Vercel caveat)
-{ eval_run_id: string; status: "started" }
+// response — the caller must keep calling with resume_eval_run_id until status is "completed"
+{ eval_run_id: string; status: "in_progress" | "completed";
+  cases_done: number; cases_total: number; retry_after_ms?: number }  // retry_after_ms only when in_progress
 ```
-Poll `GET /api/eval/summary` for progress — `finished_at: null` is the same "in progress" signal the UI already shows for a CLI-started run.
+`EvalRunForm` is the caller in practice — it drives its own run to completion by re-POSTing with `resume_eval_run_id`, waiting `retry_after_ms` (rpm-paced) between calls. `GET /api/eval/summary` is a separate, passive read model any tab can poll for progress (`finished_at: null` = in progress) — it doesn't advance the run itself.
 
 ### 9. Evaluation Harness (Stage 2)
 - **CLI:** `npm run eval -- generate --target URL --label NAME [--repeats 3] [--set-baseline] [--prompt-variant naming=degraded] [--resume EVAL_RUN_ID]`, plus `compare`.
