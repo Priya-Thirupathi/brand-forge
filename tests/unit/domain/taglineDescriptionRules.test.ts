@@ -54,4 +54,18 @@ describe("checkTaglineDescriptionShapeRules", () => {
     );
     expect(violations.map((v) => v.rule)).toContain("tone.shape");
   });
+
+  it("skips tone.shape checks when skipToneShape is true (D29: a follow-up's tone is discarded anyway)", () => {
+    const violations = checkTaglineDescriptionShapeRules(
+      { ...validOutput, tone_notes: { ...validOutput.tone_notes, voice: ["warm"] } },
+      coffeeCategory,
+      true,
+    );
+    expect(violations.map((v) => v.rule)).not.toContain("tone.shape");
+  });
+
+  it("still flags tagline/description shape problems when skipToneShape is true", () => {
+    const violations = checkTaglineDescriptionShapeRules({ ...validOutput, tagline: "Good beans" }, coffeeCategory, true);
+    expect(violations.map((v) => v.rule)).toContain("tagline.length");
+  });
 });

@@ -4,7 +4,7 @@ import type { Violation } from "@/lib/contracts/violation";
 import type { CategoryFacts, FeasibilityOptionFacts } from "@/lib/domain/types";
 import type { AgentSpec } from "@/lib/domain/agents/types";
 import { namingAgent, type NamingAccepted, type NamingInput, type NamingOutput } from "@/lib/domain/agents/naming";
-import { taglineDescriptionAgent, type TaglineDescriptionOutput } from "@/lib/domain/agents/taglineDescription";
+import { taglineDescriptionAgent, type TaglineDescriptionOutput, type ToneNotes } from "@/lib/domain/agents/taglineDescription";
 import { packagingAgent } from "@/lib/domain/agents/packaging";
 import { renderTemplate } from "@/lib/domain/prompts/render";
 import { renderRetryFeedback } from "@/lib/domain/prompts/retryFeedback";
@@ -54,6 +54,12 @@ export interface RunGenerationInput {
     naming?: NamingAccepted;
     taglineDescription?: TaglineDescriptionOutput;
   };
+  // Stage 5, item 2 (D29): a new product for an already-existing, already-named brand — naming
+  // is skipped the same way `resume.naming` skips it (no LLM call, no candidates), and
+  // tagline_description is constrained to this brand's existing tone instead of inventing one.
+  // Never set together with `resume` in practice (different flows never reachable at once from
+  // the UI), but nothing here enforces that — both would simply skip naming redundantly.
+  followUpBrand?: { id: string; name: string; toneNotes: ToneNotes };
   // Present only on `source: "eval"` runs — see NewRun.evalRunId.
   evalRunId?: string;
   // Stage 2 sensitivity proof (TRD.md §9): swaps in an alternate naming prompt for this run
@@ -147,7 +153,9 @@ export async function runGeneration(
   const effectiveNamingAgent = input.namingAgentOverride ?? namingAgent;
   const naming = input.resume?.naming
     ? { kind: "accepted" as const, accepted: input.resume.naming, records: [] }
-    : await runAgentStep(effectiveNamingAgent, { idea: input.idea, category: input.category, option: input.option }, stepCtx("naming"));
+    : input.followUpBrand
+      ? { kind: "accepted" as const, accepted: { candidates: [], selectedName: input.followUpBrand.name }, records: [] }
+      : await runAgentStep(effectiveNamingAgent, { idea: input.idea, category: input.category, option: input.option }, stepCtx("naming"));
   records.push(...naming.records);
   qualityRetries += extraAttempts(naming.records);
   // Only recorded once the step actually made at least one call — a deadline pre-check can
@@ -174,7 +182,7 @@ export async function runGeneration(
     ? { kind: "accepted" as const, accepted: input.resume.taglineDescription, records: [] }
     : await runAgentStep(
         taglineDescriptionAgent,
-        { idea: input.idea, category: input.category, option: input.option, brandName },
+        { idea: input.idea, category: input.category, option: input.option, brandName, existingToneNotes: input.followUpBrand?.toneNotes },
         stepCtx("tagline_description"),
       );
   records.push(...tagline.records);
@@ -248,6 +256,7 @@ export async function runGeneration(
       description: tagline.accepted.description,
       packaging: packaging.accepted,
       feasibilitySnapshot: input.option,
+      existingBrandId: input.followUpBrand?.id,
     },
     nameCandidates: naming.accepted.candidates,
     promptVersions,

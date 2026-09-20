@@ -1,7 +1,13 @@
 import type { GalleryProduct } from "@/lib/contracts/gallery";
 import { Badge } from "@/components/ui/Badge";
+import type { FollowUpTarget } from "@/components/generate/GenerateTab";
 
-export function Gallery({ products }: { products: GalleryProduct[] }) {
+interface GalleryProps {
+  products: GalleryProduct[];
+  onFollowUp: (target: FollowUpTarget) => void;
+}
+
+export function Gallery({ products, onFollowUp }: GalleryProps) {
   if (products.length === 0) {
     return <p className="text-sm text-muted">No products yet.</p>;
   }
@@ -21,6 +27,13 @@ export function Gallery({ products }: { products: GalleryProduct[] }) {
             {product.feasibility_snapshot.material} · {product.feasibility_snapshot.currency}{" "}
             {product.feasibility_snapshot.cost_low}–{product.feasibility_snapshot.cost_high}
           </p>
+          <button
+            type="button"
+            onClick={() => onFollowUp({ brandId: product.brand.id, brandName: product.brand.name })}
+            className="mt-1 self-start text-xs font-medium text-accent underline underline-offset-4 hover:opacity-80"
+          >
+            Add another product to this brand
+          </button>
         </div>
       ))}
     </div>

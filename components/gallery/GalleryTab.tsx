@@ -3,9 +3,14 @@
 import { useEffect, useState } from "react";
 import type { CategorySummary } from "@/lib/contracts/catalog";
 import type { GalleryProduct } from "@/lib/contracts/gallery";
+import type { FollowUpTarget } from "@/components/generate/GenerateTab";
 import { Gallery } from "./Gallery";
 
-export function GalleryTab() {
+interface GalleryTabProps {
+  onFollowUp: (target: FollowUpTarget) => void;
+}
+
+export function GalleryTab({ onFollowUp }: GalleryTabProps) {
   const [categories, setCategories] = useState<CategorySummary[]>([]);
   const [categorySlug, setCategorySlug] = useState("");
   const [products, setProducts] = useState<GalleryProduct[] | null>(null);
@@ -52,7 +57,7 @@ export function GalleryTab() {
 
       {error && <p className="text-sm text-danger">{error}</p>}
       {!error && !products && <p className="text-sm text-muted">Loading…</p>}
-      {products && <Gallery products={products} />}
+      {products && <Gallery products={products} onFollowUp={onFollowUp} />}
     </div>
   );
 }

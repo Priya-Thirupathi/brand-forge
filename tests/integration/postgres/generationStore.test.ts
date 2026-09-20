@@ -173,6 +173,84 @@ describe("createPostgresGenerationStore", () => {
       expect(ids).toEqual({ brandId: brandRows[0].id, productId: productRows[0].id });
     });
 
+    it("attaches a product to an existing brand instead of creating a new one, when content.existingBrandId is set (D29 follow-up)", async () => {
+      const firstRunId = await store.startRun(newRun());
+      const firstIds = await store.finishRun({
+        runId: firstRunId,
+        status: "succeeded",
+        content: {
+          brandName: "Ridge",
+          toneNotes: { voice: ["bold"], audience: "hikers", personality: "rugged", avoid: [] },
+          tagline: "Built for the trail",
+          description: "A steel bottle for hikers.",
+          packaging: { headline: "Ridge water bottle", body: "Steel build.", callouts: ["Durable"] },
+          feasibilitySnapshot: {
+            material: "Stainless Steel",
+            materialTerms: ["steel"],
+            costLow: 3.2,
+            costHigh: 4.8,
+            currency: "USD",
+            moq: 500,
+            leadTimeDaysLow: 35,
+            leadTimeDaysHigh: 50,
+            assumptions: "test fixture",
+          },
+        },
+        nameCandidates: [{ name: "Ridge", rationale: "short", passed: true, violations: [] }],
+        promptVersions: { naming: "abc123def456" },
+        usage: zeroUsage(),
+        qualityRetries: 0,
+        transportRetries: 0,
+        latencyMs: 1200,
+        steps: [stepRecord()],
+      });
+
+      const secondRunId = await store.startRun(newRun({ idea: "a Ridge candle for the same brand" }));
+      const secondIds = await store.finishRun({
+        runId: secondRunId,
+        status: "succeeded",
+        content: {
+          brandName: "Ridge",
+          toneNotes: { voice: ["bold"], audience: "hikers", personality: "rugged", avoid: [] },
+          tagline: "Light your trail",
+          description: "A candle for hikers who camp.",
+          packaging: { headline: "Ridge candle", body: "Soy wax.", callouts: ["Long burn"] },
+          feasibilitySnapshot: {
+            material: "Stainless Steel",
+            materialTerms: ["steel"],
+            costLow: 3.2,
+            costHigh: 4.8,
+            currency: "USD",
+            moq: 500,
+            leadTimeDaysLow: 35,
+            leadTimeDaysHigh: 50,
+            assumptions: "test fixture",
+          },
+          existingBrandId: firstIds?.brandId,
+        },
+        // No naming candidates on a follow-up — nothing was named this run.
+        nameCandidates: [],
+        promptVersions: { tagline_description: "def456", packaging: "112233" },
+        usage: zeroUsage(),
+        qualityRetries: 0,
+        transportRetries: 0,
+        latencyMs: 900,
+        steps: [],
+      });
+
+      expect(secondIds?.brandId).toBe(firstIds?.brandId);
+
+      const { rows: brandRows } = await testPool.query("select id from brands");
+      expect(brandRows).toHaveLength(1); // only ever one brand row, not two
+
+      const { rows: productRows } = await testPool.query<{ brand_id: string; tagline: string }>(
+        "select brand_id, tagline from products order by created_at",
+      );
+      expect(productRows).toHaveLength(2);
+      expect(productRows.every((p) => p.brand_id === firstIds?.brandId)).toBe(true);
+      expect(productRows.map((p) => p.tagline)).toEqual(["Built for the trail", "Light your trail"]);
+    });
+
     it("persists a rejected run's failure with no brand or product", async () => {
       const runId = await store.startRun(newRun());
       const record: FinishedRun = {

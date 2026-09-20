@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { GenerateTab } from "@/components/generate/GenerateTab";
+import { GenerateTab, type FollowUpTarget } from "@/components/generate/GenerateTab";
 import { GalleryTab } from "@/components/gallery/GalleryTab";
 import { RunsTab } from "@/components/runs/RunsTab";
 import { EvaluationTab } from "@/components/runs/EvaluationTab";
@@ -17,6 +17,12 @@ type TabId = (typeof TABS)[number]["id"];
 
 export function Tabs() {
   const [active, setActive] = useState<TabId>("generate");
+  const [followUpTarget, setFollowUpTarget] = useState<FollowUpTarget | null>(null);
+
+  function startFollowUp(target: FollowUpTarget) {
+    setFollowUpTarget(target);
+    setActive("generate");
+  }
 
   return (
     <div className="flex flex-col flex-1">
@@ -37,8 +43,8 @@ export function Tabs() {
         </div>
       </nav>
       <main className="mx-auto w-full max-w-4xl flex-1 px-6 py-10 sm:px-10">
-        {active === "generate" && <GenerateTab />}
-        {active === "gallery" && <GalleryTab />}
+        {active === "generate" && <GenerateTab followUpTarget={followUpTarget} onClearFollowUpTarget={() => setFollowUpTarget(null)} />}
+        {active === "gallery" && <GalleryTab onFollowUp={startFollowUp} />}
         {active === "runs" && <RunsTab />}
         {active === "evaluation" && <EvaluationTab />}
       </main>

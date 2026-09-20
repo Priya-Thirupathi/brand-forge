@@ -420,6 +420,24 @@ The UI (`components/generate/GenerateTab.tsx`) offers "Watch a recorded run inst
 
 ---
 
+### D29 — Brand follow-ups: tone carried over unchanged, naming skipped, no new schema
+**Added 2026-09-21.**
+
+**Decision:** A second (or later) product for an existing, visible brand — `POST /api/generate`'s new optional `follow_up_brand_id` — skips naming entirely (the brand name is already fixed) and constrains `tagline_description` to that brand's existing `tone_notes` instead of letting the model invent a new one. The model is still asked to echo the given tone in its response (so the copy reads consistent with it), but `evaluate()` discards whatever `tone_notes` the model actually returns and substitutes the brand's real one unconditionally (`lib/domain/agents/taglineDescription.ts`) — consistency is guaranteed by construction, not by hoping the model got it right. The new product attaches to the existing `brands` row (`lib/adapters/postgres/generationStore.ts`'s `insertBrandAndProduct` now takes an optional `existingBrandId` and skips creating a new brand row when it's set) rather than a fresh brand being created. `runs`/`products` already supported many products per brand structurally (D-none needed, `products.brand_id` was already a plain FK) — no migration.
+
+Entry point: a "Add another product to this brand" link on every Gallery card (`components/gallery/Gallery.tsx`), which switches to the Generate tab with the target brand locked in (`components/ui/Tabs.tsx` owns the cross-tab `followUpTarget` state) — asked and confirmed explicitly rather than assumed, over the alternative of building a dedicated `app/brands/[id]` page (bigger UI lift, and `GET /api/brands/:id` still has no UI caller — it exists at the route/adapter level only, tested but unused, same as before this decision).
+
+**Why carrying the tone over unchanged, not letting the model re-emit it (asked and confirmed explicitly):** the alternative — re-generating tone_notes each time and checking for drift — needs a new guardrail or eval dimension to detect "did the tone actually stay close enough," which is a genuinely hard, subjective thing to check cheaply and reliably. Carrying the value over by construction sidesteps that problem entirely: there's nothing to drift, because nothing is regenerated. The cost is a real, observed one, not hypothetical: a follow-up in a completely different category (a candle, made from a brand whose tone_notes were written for a coffee product) inherits `audience` text that still literally says "seeking convenient, high-quality coffee solutions" — verbatim, unedited, visibly odd under a candle. This is the accepted trade-off, not a bug; the alternative (regenerating and hoping it's close enough) trades a visible oddity for an invisible, unmeasured one.
+
+**Why `checkGenericOutputRules`/`checkTaglineDescriptionShapeRules` skip the model's own `tone_notes` on a follow-up:** that field's content is discarded regardless of what the model wrote, so validating its shape or content risks a pointless quality retry over something about to be thrown away — `checkTaglineDescriptionShapeRules` gained a `skipToneShape` parameter, and `evaluate()` passes `checkGenericOutputRules` only `{tagline, description}` instead of the full output when `existingToneNotes` is present.
+
+**Rejected:**
+- *Re-generating tone_notes each time, checked for drift* — see above; needs new guardrail/eval infrastructure for a genuinely hard subjective judgment, for a benefit (avoiding the cross-category awkwardness above) that a locked value doesn't need in the first place.
+- *A full `app/brands/[id]` detail page as the entry point* — bigger scope than the feature needs; the flat Gallery already shows `brand.id`/`brand.name` per card, so a link from there is the entire mechanism required.
+- *Reusing the `resume`/`resumedFromRunId` mechanism as-is* — `resume.naming` already being present is the right skip switch structurally, but `resume` sources its data from a prior run's own `run_steps` (a retry of the *same* idea/category), never from the `brands` table for a *different* idea/category — the two needed genuinely different data sources, not just a shared flag.
+
+---
+
 ## Open items — need a human
 1. **Quota numbers.** Read the project's requests-per-minute and requests-per-day for both models on the AI Studio rate-limit page, then set `GLOBAL_DAILY_GENERATION_CAP` ≤ RPD ÷ 6 (worst case: 3 steps × 2 attempts).
 2. **Feasibility numbers.** Seed values are labelled illustrative but need a plausibility pass.

@@ -4,13 +4,16 @@ import { useEffect, useState } from "react";
 import { IDEA_LENGTH } from "@/config/limits";
 import type { CategorySummary } from "@/lib/contracts/catalog";
 import type { GenerateRequest } from "@/lib/contracts/generate";
+import type { FollowUpTarget } from "./GenerateTab";
 
 interface GenerateFormProps {
   disabled: boolean;
   onSubmit: (request: GenerateRequest) => void;
+  followUpTarget: FollowUpTarget | null;
+  onClearFollowUpTarget: () => void;
 }
 
-export function GenerateForm({ disabled, onSubmit }: GenerateFormProps) {
+export function GenerateForm({ disabled, onSubmit, followUpTarget, onClearFollowUpTarget }: GenerateFormProps) {
   const [categories, setCategories] = useState<CategorySummary[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [categorySlug, setCategorySlug] = useState("");
@@ -41,7 +44,12 @@ export function GenerateForm({ disabled, onSubmit }: GenerateFormProps) {
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    onSubmit({ idea, category: categorySlug, feasibility_option_id: optionId || undefined });
+    onSubmit({
+      idea,
+      category: categorySlug,
+      feasibility_option_id: optionId || undefined,
+      follow_up_brand_id: followUpTarget?.brandId,
+    });
   }
 
   if (loadError) return <p className="text-sm text-danger">{loadError}</p>;
@@ -51,6 +59,18 @@ export function GenerateForm({ disabled, onSubmit }: GenerateFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="flex max-w-xl flex-col gap-5 rounded-xl border border-line bg-surface p-6">
+      {followUpTarget && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-accent/30 bg-accent-soft px-3 py-2 text-xs text-accent-soft-ink">
+          <span>
+            Adding a product to <span className="font-semibold">{followUpTarget.brandName}</span> — its established tone carries over
+            unchanged.
+          </span>
+          <button type="button" onClick={onClearFollowUpTarget} className="shrink-0 font-medium underline underline-offset-2 hover:opacity-80">
+            Switch to a new brand instead
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-col gap-4 sm:flex-row">
         <label className="flex flex-1 flex-col gap-1.5 text-sm">
           <span className="font-medium">Category</span>
@@ -116,7 +136,7 @@ export function GenerateForm({ disabled, onSubmit }: GenerateFormProps) {
         disabled={disabled || idea.trim().length < IDEA_LENGTH.min || !categorySlug}
         className="self-start rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-accent-ink transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {disabled ? "Generating…" : "Generate"}
+        {disabled ? "Generating…" : followUpTarget ? "Add product" : "Generate"}
       </button>
     </form>
   );

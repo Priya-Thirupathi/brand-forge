@@ -8,6 +8,7 @@ import type {
   NewRun,
   RunFailure,
   RunStepRecord,
+  SucceededRunContent,
 } from "@/lib/services/ports";
 
 // jsonb columns need an explicit JSON string, not the raw JS value — `pg`'s default parameter
@@ -187,16 +188,8 @@ async function insertBrandAndProduct(
 ): Promise<FinishedRunIds> {
   const { content } = record;
 
-  // `source`, `category`, `feasibility_option_id`, and `idea` all come from the `runs` row
-  // itself (set once at startRun and never changed) rather than being threaded through the
-  // service layer a second time — one less thing for the two copies to drift out of sync on.
-  const { rows: brandRows } = await client.query<{ id: string }>(
-    `insert into brands (name, tone_notes, source, hidden)
-     select $2, $3::jsonb, source, false from runs where id = $1
-     returning id`,
-    [runId, content.brandName, toJsonb(content.toneNotes)],
-  );
-  const brandId = brandRows[0].id;
+  // A follow-up (D29) attaches to the brand it named, rather than creating a new one.
+  const brandId = content.existingBrandId ?? (await insertBrand(client, runId, content));
 
   const { rows: productRows } = await client.query<{ id: string }>(
     `insert into products
@@ -208,4 +201,17 @@ async function insertBrandAndProduct(
   );
 
   return { brandId, productId: productRows[0].id };
+}
+
+// `source` comes from the `runs` row itself (set once at startRun and never changed) rather
+// than being threaded through the service layer a second time — one less thing for the two
+// copies to drift out of sync on.
+async function insertBrand(client: PoolClient, runId: string, content: SucceededRunContent): Promise<string> {
+  const { rows } = await client.query<{ id: string }>(
+    `insert into brands (name, tone_notes, source, hidden)
+     select $2, $3::jsonb, source, false from runs where id = $1
+     returning id`,
+    [runId, content.brandName, toJsonb(content.toneNotes)],
+  );
+  return rows[0].id;
 }

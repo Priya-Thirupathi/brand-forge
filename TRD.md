@@ -60,7 +60,7 @@ A Gemini prompt block during any step rejects the run with `input.safety`. Exhau
 
 Conventions: all tables in `public` with **RLS enabled and no policies** [D15]; `uuid default gen_random_uuid()` ids; `created_at timestamptz not null default now()`.
 
-Stage 1 tables and Stage 2's `eval_runs`/`eval_results`/`runs.eval_run_id` are below (each arrived in its own migration). Stage 5 adds `runs.parent_run_id` and `runs.input_brand_id`, not yet built.
+Stage 1 tables and Stage 2's `eval_runs`/`eval_results`/`runs.eval_run_id` are below (each arrived in its own migration). Stage 5 item 2 (brand follow-ups, D29) needed no new columns — `products.brand_id` already supported many products per brand; a follow-up just points a new `products` row at an existing `brands.id` instead of a fresh one.
 
 **categories**
 | column | type | notes |
@@ -333,7 +333,8 @@ Guardrail rejections return 200 with `status: "rejected"`. [D19]
 ```ts
 // request
 { idea: string; category: string; feasibility_option_id?: string;   // option defaults to the category's default
-  resume_from_run_id?: string }   // [D25] re-validates that run's succeeded steps instead of re-calling the LLM for them
+  resume_from_run_id?: string;    // [D25] re-validates that run's succeeded steps instead of re-calling the LLM for them
+  follow_up_brand_id?: string }   // [D29] skips naming, constrains tagline_description to this brand's existing tone
 ```
 With `Accept: application/x-ndjson`, the response streams events (`Cache-Control: no-cache, no-transform`, `X-Accel-Buffering: no`). Otherwise it returns one JSON body equal to the `result` event, or the error body. [D13]
 ```ts

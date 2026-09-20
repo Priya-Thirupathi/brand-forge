@@ -131,6 +131,9 @@ export interface SucceededRunContent {
   // The option's facts as they were at generation time (products.feasibility_snapshot) — a
   // snapshot, independent of whatever the feasibility_options row says later.
   feasibilitySnapshot: FeasibilityOptionFacts;
+  // Stage 5, item 2 (D29): present only for a brand follow-up — the new product attaches to
+  // this already-existing brand row instead of a fresh one being created.
+  existingBrandId?: string;
 }
 
 interface FinishedRunBase {

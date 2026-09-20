@@ -398,6 +398,56 @@ describe("runGeneration", () => {
     expect(finishedRuns.get(result.runId)?.nameCandidates?.map((c) => c.name)).toEqual(["Wagwell"]);
   });
 
+  it("follow-up (D29): skips naming and constrains tagline_description to the existing brand's tone", async () => {
+    const existingToneNotes = { voice: ["rugged", "direct"], audience: "trail runners", personality: "a no-nonsense guide", avoid: [] };
+    const ridgeTaglineJson = { ...validTaglineJson, description: validTaglineJson.description.replace(/Wagwell/g, "Ridge") };
+    const ridgePackagingJson = {
+      ...validPackagingJson,
+      headline: validPackagingJson.headline.replace("Wagwell", "Ridge"),
+      body: validPackagingJson.body.replace(/Wagwell/g, "Ridge"),
+    };
+    const { client, systemPrompts } = createScriptedLlmClient([okOutcome(ridgeTaglineJson), okOutcome(ridgePackagingJson)]);
+    const { store, finishedRuns } = createInMemoryStore();
+
+    const result = await runGeneration(
+      baseInput({ followUpBrand: { id: "brand-42", name: "Ridge", toneNotes: existingToneNotes } }),
+      { llmClient: client, store },
+    );
+
+    expect(result.outcome.status).toBe("succeeded");
+    if (result.outcome.status === "succeeded") {
+      expect(result.outcome.brandName).toBe("Ridge");
+      expect(result.outcome.toneNotes).toEqual(existingToneNotes);
+      expect(result.outcome.nameCandidates).toEqual([]);
+    }
+    expect(systemPrompts).toHaveLength(2); // tagline_description + packaging only, no naming call
+    expect(Object.keys(result.meta.promptVersions)).toEqual(["tagline_description", "packaging"]);
+    // The tagline_description prompt is told to match the existing tone, not invent one.
+    expect(systemPrompts[0]).toContain("Ridge");
+    const finished = finishedRuns.get(result.runId);
+    expect(finished?.status).toBe("succeeded");
+    if (finished?.status === "succeeded") {
+      expect(finished.content.existingBrandId).toBe("brand-42");
+      expect(finished.content.toneNotes).toEqual(existingToneNotes);
+    }
+  });
+
+  it("follow-up (D29): a content failure on the retried tagline_description step still rejects, not naming", async () => {
+    const tooShortTagline = { ...validTaglineJson, tagline: "x" }; // tagline.length violation, both attempts
+    const { client } = createScriptedLlmClient([okOutcome(tooShortTagline), okOutcome(tooShortTagline)]);
+    const { store } = createInMemoryStore();
+
+    const result = await runGeneration(
+      baseInput({ followUpBrand: { id: "brand-42", name: "Ridge", toneNotes: validTaglineJson.tone_notes } }),
+      { llmClient: client, store },
+    );
+
+    expect(result.outcome.status).toBe("rejected");
+    if (result.outcome.status === "rejected") {
+      expect(result.outcome.failure.step).toBe("tagline_description");
+    }
+  });
+
   it("passes the caller's abort signal through to the LLM client on every call", async () => {
     const controller = new AbortController();
     let sawSignal: AbortSignal | undefined;

@@ -126,6 +126,54 @@ describe("taglineDescriptionAgent.evaluate", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("substitutes the existing brand's tone_notes for a follow-up, ignoring whatever the model returned (D29)", () => {
+    const existingToneNotes = {
+      voice: ["rugged", "direct"],
+      audience: "trail runners",
+      personality: "a no-nonsense outdoor guide",
+      avoid: ["corporate jargon"],
+    };
+    const result = taglineDescriptionAgent.evaluate(
+      {
+        tagline: "Small treats, big trust",
+        description:
+          "Wagwell makes grain-free training treats sized for small dogs and big training sessions. " +
+          "Every treat is baked in small batches with real, recognizable ingredients — no fillers, no " +
+          "mystery meat, just something worth working for. Packed in a recyclable pouch, shipped fast, " +
+          "and made for dogs who deserve better snacks during every walk and every trick they learn.",
+        tone_notes: { voice: ["completely", "different", "tone"], audience: "a", personality: "b", avoid: [] },
+      },
+      { ...input, existingToneNotes },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.accepted.tone_notes).toEqual(existingToneNotes);
+    }
+  });
+
+  it("ignores a shape violation in the model's own tone_notes for a follow-up, since it's discarded anyway", () => {
+    const existingToneNotes = {
+      voice: ["rugged", "direct"],
+      audience: "trail runners",
+      personality: "a no-nonsense outdoor guide",
+      avoid: ["corporate jargon"],
+    };
+    const result = taglineDescriptionAgent.evaluate(
+      {
+        tagline: "Small treats, big trust",
+        description:
+          "Wagwell makes grain-free training treats sized for small dogs and big training sessions. " +
+          "Every treat is baked in small batches with real, recognizable ingredients — no fillers, no " +
+          "mystery meat, just something worth working for. Packed in a recyclable pouch, shipped fast, " +
+          "and made for dogs who deserve better snacks during every walk and every trick they learn.",
+        // Too few voice words (1, not 3-5) — would fail tone.shape on a fresh brand.
+        tone_notes: { voice: ["a"], audience: "", personality: "", avoid: [] },
+      },
+      { ...input, existingToneNotes },
+    );
+    expect(result.ok).toBe(true);
+  });
+
   it("rejects a regulated health claim", () => {
     const result = taglineDescriptionAgent.evaluate(
       {

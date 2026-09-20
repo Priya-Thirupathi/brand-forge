@@ -13,6 +13,10 @@ export const GenerateRequestSchema = z.object({
   // succeeded — the route replays that run's already-accepted steps (lib/adapters/postgres/
   // resume.ts) instead of redoing them. Absent, this is an ordinary fresh generation.
   resume_from_run_id: z.string().uuid().optional(),
+  // Stage 5, item 2 (D29): a new product for an existing, already-named brand — naming is
+  // skipped and tone_notes carry over unchanged. Never set together with resume_from_run_id in
+  // practice (different flows).
+  follow_up_brand_id: z.string().uuid().optional(),
 });
 export type GenerateRequest = z.infer<typeof GenerateRequestSchema>;
 

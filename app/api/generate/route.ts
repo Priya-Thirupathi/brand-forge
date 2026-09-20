@@ -15,6 +15,7 @@ import { evalRunExists } from "@/lib/adapters/postgres/evalStore";
 import { createLlmClient } from "@/lib/adapters/createLlmClient";
 import { findCategory } from "@/lib/adapters/postgres/catalog";
 import { loadResumableAccepted } from "@/lib/adapters/postgres/resume";
+import { loadFollowUpBrand } from "@/lib/adapters/postgres/brand";
 import { hashIp } from "@/lib/adapters/postgres/ipHash";
 import { getClientIp } from "@/lib/adapters/clientIp";
 import { errorResponse, validationErrorResponse } from "../_shared/response";
@@ -85,7 +86,13 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return validationErrorResponse(parsed.error);
   }
-  const { idea, category: categorySlug, feasibility_option_id: feasibilityOptionId, resume_from_run_id: resumeFromRunId } = parsed.data;
+  const {
+    idea,
+    category: categorySlug,
+    feasibility_option_id: feasibilityOptionId,
+    resume_from_run_id: resumeFromRunId,
+    follow_up_brand_id: followUpBrandId,
+  } = parsed.data;
 
   const category = await findCategory(pool, categorySlug);
   if (!category) {
@@ -98,6 +105,12 @@ export async function POST(request: NextRequest) {
       feasibilityOptionId ? `Unknown feasibility_option_id for category "${categorySlug}".` : `Category "${categorySlug}" has no default feasibility option.`,
       400,
     );
+  }
+  // D29: a follow-up's brand must exist and be visible (moderation's `hidden` flag, same rule
+  // the gallery applies) before anything else about the request is admitted.
+  const followUpBrand = followUpBrandId ? ((await loadFollowUpBrand(pool, followUpBrandId)) ?? undefined) : undefined;
+  if (followUpBrandId && !followUpBrand) {
+    return errorResponse("invalid_input", `Unknown follow_up_brand_id "${followUpBrandId}".`, 400);
   }
 
   // TRD.md §10: requests with no identifiable IP share one bucket, rather than each bypassing
@@ -147,6 +160,7 @@ export async function POST(request: NextRequest) {
     clientIpHash,
     resumedFromRunId: resumeFromRunId,
     resume,
+    followUpBrand,
     evalRunId,
     namingAgentOverride,
   };

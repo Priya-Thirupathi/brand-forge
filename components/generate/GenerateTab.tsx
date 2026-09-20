@@ -10,7 +10,20 @@ import { RejectionNotice } from "./RejectionNotice";
 import { QuotaNotice } from "./QuotaNotice";
 import { Badge } from "@/components/ui/Badge";
 
-export function GenerateTab() {
+// Stage 5, item 2 (D29): the brand a "Add another product" click in the Gallery is targeting.
+// Owned here (not in Tabs.tsx, which renders this component) so Tabs → GenerateTab stays a
+// one-directional import, not a cycle.
+export interface FollowUpTarget {
+  brandId: string;
+  brandName: string;
+}
+
+interface GenerateTabProps {
+  followUpTarget: FollowUpTarget | null;
+  onClearFollowUpTarget: () => void;
+}
+
+export function GenerateTab({ followUpTarget, onClearFollowUpTarget }: GenerateTabProps) {
   const { state, generate, resume, watchReplay, reset } = useGeneration();
   const running = state.status === "running";
   const resumable = state.status === "run_error" && state.step !== "naming";
@@ -22,7 +35,7 @@ export function GenerateTab() {
 
   return (
     <div className="flex flex-col gap-6">
-      <GenerateForm disabled={running} onSubmit={generate} />
+      <GenerateForm disabled={running} onSubmit={generate} followUpTarget={followUpTarget} onClearFollowUpTarget={onClearFollowUpTarget} />
 
       {running && state.isReplay && <Badge variant="info">Replaying a recorded run — not live</Badge>}
       {running && <StepProgress steps={state.steps} />}

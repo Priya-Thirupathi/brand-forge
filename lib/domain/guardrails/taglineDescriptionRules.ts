@@ -15,9 +15,14 @@ export interface TaglineDescriptionOutput {
 }
 
 // tagline.length, description.length, description.category, tone.shape (TRD.md §7).
+// `skipToneShape` is true for a brand follow-up (D29) — the model's own tone_notes are
+// discarded in favor of the brand's already-established, already-validated ones (D29's
+// evaluate()), so validating their shape here would only risk a pointless quality retry over a
+// field whose content is about to be thrown away.
 export function checkTaglineDescriptionShapeRules(
   output: TaglineDescriptionOutput,
   category: CategoryFacts,
+  skipToneShape = false,
 ): Violation[] {
   const violations: Violation[] = [];
 
@@ -44,27 +49,29 @@ export function checkTaglineDescriptionShapeRules(
     violations.push({ rule: "description.category", message: "description doesn't mention the category" });
   }
 
-  const { voice, audience, personality, avoid } = output.tone_notes;
-  if (voice.length < TONE.voiceItems.min || voice.length > TONE.voiceItems.max) {
-    violations.push({
-      rule: "tone.shape",
-      message: `tone_notes.voice has ${voice.length} items, expected ${TONE.voiceItems.min}-${TONE.voiceItems.max}`,
-    });
-  }
-  if (countWords(audience) > TONE.audienceMaxWords) {
-    violations.push({ rule: "tone.shape", message: `tone_notes.audience exceeds ${TONE.audienceMaxWords} words` });
-  }
-  if (countWords(personality) > TONE.personalityMaxWords) {
-    violations.push({
-      rule: "tone.shape",
-      message: `tone_notes.personality exceeds ${TONE.personalityMaxWords} words`,
-    });
-  }
-  if (avoid.length > TONE.avoidItems.max) {
-    violations.push({
-      rule: "tone.shape",
-      message: `tone_notes.avoid has ${avoid.length} items, expected at most ${TONE.avoidItems.max}`,
-    });
+  if (!skipToneShape) {
+    const { voice, audience, personality, avoid } = output.tone_notes;
+    if (voice.length < TONE.voiceItems.min || voice.length > TONE.voiceItems.max) {
+      violations.push({
+        rule: "tone.shape",
+        message: `tone_notes.voice has ${voice.length} items, expected ${TONE.voiceItems.min}-${TONE.voiceItems.max}`,
+      });
+    }
+    if (countWords(audience) > TONE.audienceMaxWords) {
+      violations.push({ rule: "tone.shape", message: `tone_notes.audience exceeds ${TONE.audienceMaxWords} words` });
+    }
+    if (countWords(personality) > TONE.personalityMaxWords) {
+      violations.push({
+        rule: "tone.shape",
+        message: `tone_notes.personality exceeds ${TONE.personalityMaxWords} words`,
+      });
+    }
+    if (avoid.length > TONE.avoidItems.max) {
+      violations.push({
+        rule: "tone.shape",
+        message: `tone_notes.avoid has ${avoid.length} items, expected at most ${TONE.avoidItems.max}`,
+      });
+    }
   }
 
   return violations;
