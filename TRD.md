@@ -369,6 +369,8 @@ type GenerateResult = {
 
 **`GET /api/runs?limit&cursor`** → run metadata only: id, created_at, status, failure (step + rule ids), resumed_from_run_id, models, quality and transport retries, latency, tokens. Never `raw_output`, idea text of non-succeeded runs, or IP hashes.
 
+**`GET /api/generate/replay`** (D28, Stage 5 item 1) — always streams the same `GenerateEvent`/`GenerateResult` shape as `POST /api/generate`, reconstructed from the most recently persisted succeeded, non-hidden, `source: "user"` run (`lib/adapters/postgres/replay.ts`) instead of calling an LLM. No request body, no admission checks (no rate limit, no daily cap — see D28's "why" for why that's deliberate). `404 no_replayable_run` if nothing qualifies. Each `step_finished` is delayed by that step's real recorded `latency_ms` before being sent, so a replay takes as long as the original run did.
+
 **`POST /api/generate` eval headers (Stage 2)** — present only when the harness, not a browser, is calling:
 | Header | Required with the others | Effect |
 |---|---|---|

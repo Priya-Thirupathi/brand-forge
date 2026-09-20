@@ -8,16 +8,23 @@ import { FeasibilityCard } from "./FeasibilityCard";
 import { GuardrailPanel } from "./GuardrailPanel";
 import { RejectionNotice } from "./RejectionNotice";
 import { QuotaNotice } from "./QuotaNotice";
+import { Badge } from "@/components/ui/Badge";
 
 export function GenerateTab() {
-  const { state, generate, resume, reset } = useGeneration();
+  const { state, generate, resume, watchReplay, reset } = useGeneration();
   const running = state.status === "running";
   const resumable = state.status === "run_error" && state.step !== "naming";
+  // Stage 5, item 1: offered specifically when the *quota* is the problem — not a per-IP
+  // throttle (rate_limited) or a transient run failure (deadline_exceeded/provider_error/
+  // internal/aborted), where an ordinary retry is the right call and already offered below.
+  const replayOffered =
+    (state.status === "admission_error" && state.error === "daily_cap_reached") || (state.status === "run_error" && state.code === "quota_exhausted");
 
   return (
     <div className="flex flex-col gap-6">
       <GenerateForm disabled={running} onSubmit={generate} />
 
+      {running && state.isReplay && <Badge variant="info">Replaying a recorded run — not live</Badge>}
       {running && <StepProgress steps={state.steps} />}
 
       {state.status === "admission_error" && <QuotaNotice message={state.message} retryAfterS={state.retryAfterS} />}
@@ -25,6 +32,7 @@ export function GenerateTab() {
 
       {(state.status === "succeeded" || state.status === "rejected") && (
         <div className="flex flex-col gap-4">
+          {state.isReplay && <Badge variant="info">Recorded run, replayed with its original timing — not a live generation</Badge>}
           <FeasibilityCard feasibility={state.result.feasibility} />
           {state.status === "succeeded" && <ResultCard result={state.result} />}
           {state.status === "rejected" && <RejectionNotice result={state.result} />}
@@ -44,6 +52,15 @@ export function GenerateTab() {
               className="self-start rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-accent-ink hover:opacity-90"
             >
               Resume from {state.step.replace("_", " ")}
+            </button>
+          )}
+          {replayOffered && (
+            <button
+              type="button"
+              onClick={watchReplay}
+              className="self-start rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-accent-ink hover:opacity-90"
+            >
+              Watch a recorded run instead
             </button>
           )}
           <button type="button" onClick={reset} className="self-start text-sm font-medium text-accent underline underline-offset-4 hover:opacity-80">

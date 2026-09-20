@@ -78,7 +78,7 @@ Secondary audience: a **reviewer** (hiring manager or engineer) evaluating the p
 - README and architecture note, a 2-minute walkthrough recording, and a separate pitch write-up.
 
 **Stage 5 — Extensions (in order, each independently demoable)**
-1. Recorded-run replay: when the daily quota is exhausted, a visitor can watch a stored run stream with its original timings.
+1. ✅ Recorded-run replay: when the daily quota is exhausted, a visitor can watch a stored run stream with its original timings. [D28]
 2. Brand follow-ups with tone memory, plus consistency eval cases. [D10]
 3. Alternate-name regenerate. [D8]
 4. Per-step routing experiment, strong vs. cheap model. [D12]

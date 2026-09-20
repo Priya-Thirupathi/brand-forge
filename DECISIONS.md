@@ -398,6 +398,28 @@ ESLint `no-restricted-imports` enforces the domain, contracts, and services rule
 
 ---
 
+### D28 — Recorded-run replay: a separate GET endpoint, no admission checks, auto-picked with no curation flag
+**Added 2026-09-21.**
+
+**Decision:** `GET /api/generate/replay` streams the same NDJSON event contract as `POST /api/generate` (`run_started`/`step_started`/`step_finished`/`result`, `lib/contracts/generate.ts`), reconstructed entirely from a previously persisted run — no LLM call. `lib/adapters/postgres/replay.ts`'s `findReplayableRun` picks the most recent succeeded, non-hidden, `source: "user"` run (same visibility rule the gallery already uses, D6) — no new `is_sample`/curation column. A bad pick is fixed the same way a bad gallery entry already is: hide it (the existing `hidden` flag), and the picker moves to the next one. Each step's `step_finished` is delayed by that step's actual recorded `latency_ms` before being sent, so the replay takes as long as the original run did — the point of "recorded-run replay" (PRD.md Stage 5, item 1) is showing what a real run's pacing looks like, not an instant fake-out.
+
+The endpoint takes no admission checks at all (no rate limit, no daily cap) — it has to work precisely when the daily quota is exhausted, which is the entire reason it exists, and it never touches the LLM provider's quota in the first place.
+
+The UI (`components/generate/GenerateTab.tsx`) offers "Watch a recorded run instead" only when the failure is quota-shaped — an admission `daily_cap_reached`, or a run-level `quota_exhausted` error — not for `rate_limited` (a per-IP throttle, where an ordinary retry is the right call) or a transient run failure. Every replay is labeled ("Recorded run, replayed with its original timing — not a live generation") for as long as it's on screen, live or finished — showing stored data paced to look like it's happening now, with no label, would be dishonest in exactly the way this project's own "Built honestly" framing argues against.
+
+**Why a separate endpoint, not a `POST /api/generate` mode:**
+- `resume_from_run_id` (D25) is a variant of a real admitted generation — it still checks rate limits, still calls the LLM for whatever wasn't already accepted. A replay does neither, so folding it into the same request schema (`idea`/`category` required today) would mean restructuring `GenerateRequestSchema` into a union just to carry a case that ignores most of its fields.
+- A GET with no body matches what it actually is: a read of already-persisted data, not a new generation request.
+
+**Why no rate limit on it either:** each call is two indexed Postgres reads plus a held-open connection for the same ≤25s a real succeeded run already took — no different a resource cost than someone leaving `/api/runs` open and polling it. Adding a bespoke limiter here would be inventing a problem this feature doesn't have (same reasoning D16 already applies to why `/api/runs`/`/api/products` aren't rate-limited).
+
+**Rejected:**
+- *A hand-curated `runs.is_sample` flag* — considered and asked about explicitly; guarantees demo quality but needs upkeep (a migration, and a person remembering to set it) for a problem the existing `hidden` flag already solves reactively.
+- *Replaying at fixed/sped-up timing instead of the real recorded `latency_ms`* — would misrepresent what a real run looks like, the opposite of this feature's purpose.
+- *A non-streaming JSON variant, like `POST /api/generate`'s `respondOnce`* — pointless here: the entire value of streaming is the paced timing; a non-streaming replay would just be an artificial multi-second `await` before returning one blob, with no intermediate feedback to show for it (same reasoning as D13).
+
+---
+
 ## Open items — need a human
 1. **Quota numbers.** Read the project's requests-per-minute and requests-per-day for both models on the AI Studio rate-limit page, then set `GLOBAL_DAILY_GENERATION_CAP` ≤ RPD ÷ 6 (worst case: 3 steps × 2 attempts).
 2. **Feasibility numbers.** Seed values are labelled illustrative but need a plausibility pass.

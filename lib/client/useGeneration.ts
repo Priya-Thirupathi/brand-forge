@@ -15,20 +15,17 @@ export function useGeneration() {
   // having to hold onto it — only ever read back inside this hook.
   const lastRequestRef = useRef<GenerateRequest | null>(null);
 
-  const submit = useCallback(async (request: GenerateRequest, resumedSteps?: StepName[]) => {
+  // Shared by every way of starting a stream (a fresh submit, a resume, or a replay) — they
+  // all consume the same NDJSON event contract (lib/contracts/generate.ts), so only how the
+  // fetch is made differs between them.
+  const runStream = useCallback(async (submitExtra: { resumedSteps?: StepName[]; isReplay?: boolean }, doFetch: (signal: AbortSignal) => Promise<Response>) => {
     controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
-    lastRequestRef.current = request;
-    dispatch({ type: "submit", resumedSteps });
+    dispatch({ type: "submit", ...submitExtra });
 
     try {
-      const response = await fetch("/api/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
-        body: JSON.stringify(request),
-        signal: controller.signal,
-      });
+      const response = await doFetch(controller.signal);
 
       // A 400/404/429/500 admission failure (TRD.md §8) is a plain JSON body regardless of the
       // Accept header we sent — only an admitted run actually streams NDJSON.
@@ -45,7 +42,30 @@ export function useGeneration() {
     }
   }, []);
 
+  const submit = useCallback(
+    (request: GenerateRequest, resumedSteps?: StepName[]) => {
+      lastRequestRef.current = request;
+      return runStream({ resumedSteps }, (signal) =>
+        fetch("/api/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
+          body: JSON.stringify(request),
+          signal,
+        }),
+      );
+    },
+    [runStream],
+  );
+
   const generate = useCallback((request: GenerateRequest) => submit(request), [submit]);
+
+  // Stage 5, item 1: streams a stored succeeded run back with its original per-step timing
+  // instead of calling an LLM — the server picks which one (GET /api/generate/replay), so
+  // there's no request body and nothing to remember in lastRequestRef.
+  const watchReplay = useCallback(
+    () => runStream({ isReplay: true }, (signal) => fetch("/api/generate/replay", { headers: { Accept: "application/x-ndjson" }, signal })),
+    [runStream],
+  );
 
   // Retries a run that ended `status: "error"` after at least one step already succeeded —
   // the server (lib/adapters/postgres/resume.ts) replays those steps instead of redoing them.
@@ -68,5 +88,5 @@ export function useGeneration() {
     dispatch({ type: "reset" });
   }, []);
 
-  return { state, generate, resume, reset };
+  return { state, generate, resume, watchReplay, reset };
 }

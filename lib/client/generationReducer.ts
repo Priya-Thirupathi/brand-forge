@@ -26,9 +26,9 @@ export interface AdmissionError {
 
 export type GenerationState =
   | { status: "idle" }
-  | { status: "running"; runId?: string; steps: Record<StepName, StepState> }
-  | { status: "succeeded"; result: GenerateResult }
-  | { status: "rejected"; result: GenerateResult }
+  | { status: "running"; runId?: string; steps: Record<StepName, StepState>; isReplay?: boolean }
+  | { status: "succeeded"; result: GenerateResult; isReplay?: boolean }
+  | { status: "rejected"; result: GenerateResult; isReplay?: boolean }
   // `step` is the failed step — anything other than "naming" means at least one earlier step
   // already succeeded and can be skipped on a resume (a POST /api/generate carrying
   // `resume_from_run_id: runId`), not just retried from scratch.
@@ -38,7 +38,7 @@ export type GenerationState =
 export const initialGenerationState: GenerationState = { status: "idle" };
 
 export type GenerationAction =
-  | { type: "submit"; resumedSteps?: StepName[] }
+  | { type: "submit"; resumedSteps?: StepName[]; isReplay?: boolean }
   | ({ type: "admission_error" } & AdmissionError)
   | { type: "stream_event"; event: GenerateEvent }
   // The stream ended (network drop, parse failure) without ever sending a `result`/`error`
@@ -50,7 +50,7 @@ export type GenerationAction =
 export function generationReducer(state: GenerationState, action: GenerationAction): GenerationState {
   switch (action.type) {
     case "submit":
-      return { status: "running", steps: initialSteps(action.resumedSteps) };
+      return { status: "running", steps: initialSteps(action.resumedSteps), isReplay: action.isReplay };
     case "admission_error":
       return { status: "admission_error", httpStatus: action.httpStatus, error: action.error, message: action.message, retryAfterS: action.retryAfterS };
     case "reset":
@@ -83,7 +83,7 @@ function applyStreamEvent(state: GenerationState, event: GenerateEvent): Generat
     case "step_finished":
       return { ...state, steps: { ...state.steps, [event.step]: event.passed ? "passed" : event.attempt === 1 ? "retrying" : "failed" } };
     case "result":
-      return { status: event.result.status, result: event.result };
+      return { status: event.result.status, result: event.result, isReplay: state.isReplay };
     case "error":
       return { status: "run_error", runId: event.run_id, code: event.code, message: event.message, step: event.step };
   }

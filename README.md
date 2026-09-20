@@ -101,6 +101,15 @@ The `--prompt-variant naming=degraded` run above is the sensitivity proof (`PRD.
 in a deliberately worse naming prompt and `compare` should flag it as a distinctiveness regression
 — if it doesn't, don't trust any other comparison until that's understood.
 
+## Recorded-run replay (Stage 5)
+
+When the daily generation cap or the active provider's quota is exhausted, the Generate tab
+offers **"Watch a recorded run instead"** — it streams the most recent real, public, succeeded
+generation back with its original per-step timing (`GET /api/generate/replay`, no LLM call, no
+admission checks). It's always labeled as a recorded run, never presented as live. A bad pick is
+fixed the same way a bad gallery entry is: hide it (see Moderation, below) and the picker moves
+to the next one.
+
 ## Moderation
 
 There's no admin UI for removing a generation from the public gallery. Hide one manually:

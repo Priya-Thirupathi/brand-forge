@@ -120,4 +120,18 @@ describe("generationReducer", () => {
     state = generationReducer(state, { type: "reset" });
     expect(state).toEqual({ status: "idle" });
   });
+
+  it("carries isReplay from submit through to the running and succeeded states", () => {
+    const result = succeededResult();
+    let state: GenerationState = generationReducer(initialGenerationState, { type: "submit", isReplay: true });
+    expect(state).toMatchObject({ status: "running", isReplay: true });
+
+    state = generationReducer(state, { type: "stream_event", event: { type: "result", result } });
+    expect(state).toMatchObject({ status: "succeeded", isReplay: true });
+  });
+
+  it("leaves isReplay unset for an ordinary submit", () => {
+    const state = generationReducer(initialGenerationState, { type: "submit" });
+    expect((state as { isReplay?: boolean }).isReplay).toBeUndefined();
+  });
 });
