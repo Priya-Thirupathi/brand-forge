@@ -91,7 +91,9 @@ Each entry records the decision, why it was made, and the alternatives that were
 
 **Revised 2026-09-20:** corrected to match the shipped copy — the Generate tab's disclosure (`components/generate/GenerateForm.tsx`) only ever said IP hashing and public-gallery visibility; it never named Gemini or Google. This decision previously claimed it also disclosed the idea being "sent to Gemini's free tier (where Google may use them to improve its products)," which was never actually shipped — doc drift, not a regression from the Qwen switch (D2, D26). Provider-agnostic wording turned out to be the right call in hindsight, now that the active provider varies by `LLM_PROVIDER`.
 
-**Decision:** All successful user generations appear in the gallery. The Generate tab states upfront that the idea is stored and may appear publicly, and that the IP address is hashed and used only for rate limiting — not which LLM provider processes it. Offensive items are hidden manually with a `hidden` flag. Eval-generated content never appears.
+**Revised 2026-09-20 (later same day):** the gap this correction surfaced — the app never disclosed that ideas are sent to an LLM at all, not even generically — was itself closed. `GenerateForm.tsx` now adds "Your idea is sent to an AI model to generate the brand copy," still without naming Gemini/Qwen specifically, consistent with the provider-agnostic wording decided above.
+
+**Decision:** All successful user generations appear in the gallery. The Generate tab states upfront that the idea is sent to an AI model, is stored, and may appear publicly, and that the IP address is hashed and used only for rate limiting — none of this names which LLM provider processes it. Offensive items are hidden manually with a `hidden` flag. Eval-generated content never appears.
 
 **Why:** A first-time visitor — often a reviewer — sees a populated gallery instead of an empty page.
 
