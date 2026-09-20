@@ -1,5 +1,7 @@
 # BrandForge
 
+**Live demo: [brand-forge-mu-six.vercel.app](https://brand-forge-mu-six.vercel.app/)**
+
 A small end-to-end web app: pick a product category and material, write a one-sentence product
 idea, and a chain of AI agents produces a brand kit — three name candidates (one selected), a
 tagline, a description, and packaging copy — grounded in an illustrative manufacturing estimate
@@ -11,31 +13,34 @@ form a public gallery.
 
 This is a portfolio project demonstrating full-stack product engineering around AI agents: the
 agent harness, the manufacturing constraints, and the product surface. It runs entirely on
-free-tier infrastructure (no billing account attached to the Gemini project — see `DECISIONS.md`
-D2).
+free-tier LLM infrastructure — no billing account attached to either provider, so the live demo
+carries zero spend risk (see `DECISIONS.md` D2).
 
 `PRD.md`, `TRD.md`, and `DECISIONS.md` are the source of truth for scope, architecture, and every
 non-obvious decision (with rejected alternatives). This README only covers running the thing.
 
 ## Stack
 
-Next.js (App Router) · TypeScript · Postgres (`pg`, hand-rolled migrations, no ORM) · Gemini via
-`@google/genai` · Zod · Tailwind. Layered code with ESLint-enforced import boundaries — see
-`TRD.md` §2 and D23.
+Next.js (App Router) · TypeScript · Postgres (`pg`, hand-rolled migrations, no ORM; Neon in
+production, local Docker in dev) · Zod · Tailwind, deployed on Vercel. Two interchangeable
+free-tier LLM providers behind one interface (`LlmClient`, D2) — Qwen via Groq (the live demo's
+current default) or Gemini via `@google/genai`. Layered code with ESLint-enforced import
+boundaries — see `TRD.md` §2 and D23.
 
 ## Setup
 
 ```bash
 docker compose up -d db
 npm install
-cp .env.local.example .env.local   # fill in GEMINI_API_KEY and IP_HASH_SALT at minimum
+cp .env.local.example .env.local   # fill in GROQ_API_KEY and IP_HASH_SALT at minimum
 npm run migrate
 npm run seed
 npm run dev
 ```
 
-Open http://localhost:3000. `npm run check-models` confirms `GEMINI_API_KEY` and the configured
-model IDs actually work before you rely on them in the UI.
+Open http://localhost:3000. `npm run check-models` confirms the configured provider's API key
+and model IDs actually work before you rely on them in the UI — it checks whichever provider
+`LLM_PROVIDER` selects (Qwen/Groq by default in `.env.local.example`; see below).
 
 ### Integration test database
 
@@ -60,15 +65,16 @@ npm run test:integration   # needs the test database above running
 CI (`.github/workflows/ci.yml`) runs all four against a fresh Postgres service container on
 every push and pull request.
 
-## Alternate provider: Qwen (via Groq) instead of Gemini
+## LLM provider: Qwen (default) or Gemini
 
 Gemini's free tier has a small daily quota that a single testing session (or a public demo) can
-exhaust. `.env.local.example` has a commented-out block that points the app at Qwen (via
-[Groq](https://console.groq.com)'s free tier) instead — set `LLM_PROVIDER=qwen` and
-`GROQ_API_KEY` to switch. This works in any environment, including production — see D26 in
-`DECISIONS.md`, and its accepted gap: Groq/Qwen exposes no equivalent of Gemini's safety feedback
-(D22), so moderation guardrails beyond the app's own banned-word/claims checks don't get
-exercised while this provider is active.
+exhaust — it did, repeatedly, including on the deployed demo itself (D2). `LLM_PROVIDER=qwen`
+(set by default in this repo's own `.env.local.example` and in production) points the app at Qwen
+via [Groq](https://console.groq.com)'s free tier instead, using `GROQ_API_KEY`. Leaving
+`LLM_PROVIDER` unset falls back to Gemini (`GEMINI_API_KEY`) — see D26 in `DECISIONS.md`. One
+accepted gap either way: Groq/Qwen exposes no equivalent of Gemini's safety feedback (D22), so
+moderation guardrails beyond the app's own banned-word/claims checks don't get exercised while
+Qwen is the active provider.
 
 ## Evaluation harness (Stage 2)
 
