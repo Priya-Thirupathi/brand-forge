@@ -409,9 +409,9 @@ A valid token admits the request as `source: "eval"` and **skips `checkRateLimit
   | Limit | Default | Counted from |
   |---|---|---|
   | Generations per IP | 10 / hour | `runs` where `source = user`, any status |
-  | Generations globally | 50 / rolling 24 h (placeholder) | `runs` where `source = user` |
-  Set the global cap ≤ the project's requests-per-day ÷ 6 (worst case: 3 steps × 2 attempts). Requests with no identifiable IP share one bucket.
-- **Billing:** the Gemini project has no billing account, so no charges are possible (PRD M6).
+  | Generations globally | 166 / rolling 24 h | `runs` where `source = user` |
+  Global cap = active provider's requests-per-day ÷ 6 (worst case: 3 steps × 2 attempts). Sized 2026-09-20 against Groq's qwen/qwen3.8-27b free tier (1,000 RPD, confirmed at console.groq.com/docs/rate-limits — also 30 RPM/8K TPM/200K TPD, comfortably above what 166 runs/day sustains even at peak). Re-size if `LLM_PROVIDER` changes back to Gemini, whose daily quota is smaller (D26). Requests with no identifiable IP share one bucket.
+- **Billing:** neither provider's project has a billing account, so no charges are possible on either (PRD M6).
 - **Client IP:** first address of `x-forwarded-for`, else `x-real-ip`; hashed with `IP_HASH_SALT`; raw IP never stored.
 - **Public data:** Generate-tab notice (idea stored, may appear publicly; IP hashed for rate limiting only — doesn't name the active LLM provider, D6). Moderation: `update products set hidden = true where id = …`. `/api/runs` exposes metadata only.
 - **Prompt injection:** §5 prompt construction; §7 known limitations.
@@ -436,7 +436,7 @@ A valid token admits the request as `source: "eval"` and **skips `checkRateLimit
 | `TEST_DATABASE_URL` | local compose test DB | integration tests |
 | `IP_HASH_SALT` | — | ≥ 16 chars |
 | `RATE_LIMIT_GENERATE_PER_HOUR` | 10 | |
-| `GLOBAL_DAILY_GENERATION_CAP` | 50 | see §10 |
+| `GLOBAL_DAILY_GENERATION_CAP` | 166 | sized to Groq's qwen/qwen3.8-27b free-tier RPD, see §10 |
 | `EVAL_TOKEN` | — | Stage 2; unset disables eval traffic on this target (§10) |
 | `JUDGE_MODEL` | `gemini-3.5-flash-lite` | Stage 2; deliberately a different tier than `MODEL_STRONG` so the judge isn't the same model grading itself (§9, risk table §9 in PRD.md) |
 | `EVAL_TARGET_RPM` | 6 | Stage 2; CLI's own pacing against `--target`, independent of `RATE_LIMIT_GENERATE_PER_HOUR` |

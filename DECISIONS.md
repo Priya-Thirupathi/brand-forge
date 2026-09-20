@@ -214,6 +214,8 @@ Each entry records the decision, why it was made, and the alternatives that were
 ---
 
 ### D16 — Rate limits are counted in Postgres
+**Revised 2026-09-20:** `GLOBAL_DAILY_GENERATION_CAP` sized for real (was a 50/day placeholder) — `1000 ÷ 6 = 166`, against Groq's qwen/qwen3.8-27b free tier (1,000 RPD, confirmed at console.groq.com/docs/rate-limits the same day D2/D26 made it the production provider). `RATE_LIMIT_GENERATE_PER_HOUR` (10/IP/hour) wasn't touched — it's an abuse-prevention throttle on a single visitor, not derived from provider quota math, and 10/hour/IP is already far under the ~300/hour system-wide ceiling Groq's 30 RPM implies at 6 calls/run worst case.
+
 **Decision:** Count recent `runs` rows by hashed IP and globally with an indexed query, using the app server's clock for the window (as `booking-app/lib/rateLimit.ts` does). Requests with no identifiable IP share one bucket.
 
 **Why:** Postgres is already there, the rows being counted are written anyway, and demo traffic makes an indexed count cheap. A shared bucket for unknown IPs fails closed.
