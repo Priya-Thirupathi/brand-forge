@@ -16,8 +16,10 @@ agent harness, the manufacturing constraints, and the product surface. It runs e
 free-tier LLM infrastructure — no billing account attached to either provider, so the live demo
 carries zero spend risk (see `DECISIONS.md` D2).
 
-`PRD.md`, `TRD.md`, and `DECISIONS.md` are the source of truth for scope, architecture, and every
-non-obvious decision (with rejected alternatives). This README only covers running the thing.
+`ARCHITECTURE.md` is a short narrative tour of the system's more interesting engineering choices.
+`PRD.md`, `TRD.md`, and `DECISIONS.md` are the exhaustive source of truth for scope, architecture,
+and every non-obvious decision (with rejected alternatives). This README only covers running the
+thing.
 
 ## Stack
 
