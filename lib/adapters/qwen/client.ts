@@ -1,11 +1,12 @@
-// Local-dev-only alternate provider — Groq's OpenAI-compatible chat completions API, used to
-// test against Qwen without spending Gemini's free-tier quota (see
-// app/api/generate/route.ts's createLlmClient). D2 still names Gemini as the only *production*
-// LLM provider; this never runs when NODE_ENV === "production".
+// Alternate provider — Groq's OpenAI-compatible chat completions API, selectable in any
+// environment via LLM_PROVIDER=qwen (see lib/adapters/createLlmClient.ts, D26). Originally
+// added to test against Qwen without spending Gemini's free-tier quota; now also usable as the
+// production provider for the same reason.
 //
 // Known gap vs. the Gemini adapter: Groq/Qwen exposes no equivalent of Gemini's safety
 // feedback (D22), so this client never produces "prompt_blocked"/"response_blocked" outcomes —
-// moderation guardrails simply don't get exercised when testing against Qwen locally.
+// moderation guardrails simply don't get exercised while this provider is active — including in
+// production, now that it's not gated to local dev (D2).
 import type { LlmClient, LlmOutcome, LlmRequest, TokenUsage } from "@/lib/services/ports";
 import { withRetry, type RetryClassification } from "../withRetry";
 import { classifyGroqError, GroqApiError } from "./errors";

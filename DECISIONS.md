@@ -15,21 +15,23 @@ Each entry records the decision, why it was made, and the alternatives that were
 
 ---
 
-### D2 — Gemini API on the free tier is the only LLM provider
+### D2 — Only free-tier LLM providers, selected by `LLM_PROVIDER`
 **Revised 2026-09-15:** was OpenAI. Changed because the project runs on free-tier keys only.
 
-**Decision:** All generation (and, in Stage 2, judging) uses the Gemini API via `@google/genai`, on a Google Cloud project with **no billing account**. Two tiers configured by env: `strong` (default `gemini-3.8-flash`) and `cheap` (default `gemini-3.5-flash-lite`). Token counts are recorded; dollar cost is not tracked because it is always $0.
+**Revised 2026-09-20:** was "Gemini is the only provider, enforced by a `NODE_ENV` check that kept the Qwen/Groq adapter (D26) from ever running in a deployed build." That enforcement is gone — `LLM_PROVIDER=qwen` now selects Qwen in any environment, including production, and the live deployed demo currently runs on it. Reason: Gemini's daily quota kept getting exhausted, including in the deployed demo itself, not just local testing sessions — see D26's "Why" for the same observation made about local dev. Gemini remains fully supported and is the default when `LLM_PROVIDER` is unset. **Consequence worth knowing:** D22's Gemini-safety-feedback moderation layer doesn't exist on Qwen/Groq, so while Qwen is the active provider, `input.safety`/`output.safety` rejections never fire — the app's own banned-word/regulated-claims/famous-brand checks (not provider-dependent) still do.
+
+**Decision:** All generation (and, in Stage 2, judging) uses one of two free-tier `LlmClient` implementations, chosen by `LLM_PROVIDER` (`lib/adapters/createLlmClient.ts`): Gemini via `@google/genai`, on a Google Cloud project with **no billing account** (`strong` default `gemini-3.8-flash`, `cheap` default `gemini-3.5-flash-lite`); or Qwen via Groq's free tier (`qwen/qwen3.8-27b`, D26). Token counts are recorded for either; dollar cost is not tracked because it is always $0 on both.
 
 **Why:**
-- A project without billing cannot incur charges, so a public demo link has zero spend risk.
-- Both tiers are stable models on the free tier and support JSON-schema structured output.
-- Quota (requests per minute/day, per project), not money, becomes the constraint the design has to respect — see D5, D21, D22.
+- Neither provider can incur charges on these keys, so a public demo link has zero spend risk regardless of which is active.
+- Both Gemini tiers are stable models on the free tier and support JSON-schema structured output.
+- Quota (requests per minute/day, per project), not money, becomes the constraint the design has to respect — see D5, D16, D21, D22, D26.
 
 **Rejected:**
 - *OpenAI* — paid only.
-- *Tracking estimated cost* — every value would be 0 on the free tier; token counts carry the same information for later analysis.
+- *Tracking estimated cost* — every value would be 0 on either free tier; token counts carry the same information for later analysis.
 
-**Accepted trade-off:** Google's pricing page states free-tier content is "Used to improve our products". The UI discloses this (D6).
+**Accepted trade-off:** Google's pricing page states free-tier content is "Used to improve our products" — true only while Gemini is the active provider. The UI's disclosure (D6) doesn't name either provider, so this doesn't need updating each time `LLM_PROVIDER` changes. Whichever provider is active, moderation coverage differs per the note above.
 
 ---
 
@@ -87,7 +89,9 @@ Each entry records the decision, why it was made, and the alternatives that were
 ### D6 — Generations form a public shared gallery
 **Revised 2026-09-15:** semantic search removed (D14); the gallery is filtered by category.
 
-**Decision:** All successful user generations appear in the gallery. The Generate tab states upfront that ideas are stored, publicly visible, and sent to Gemini's free tier (where Google may use them to improve its products). Offensive items are hidden manually with a `hidden` flag. Eval-generated content never appears.
+**Revised 2026-09-20:** corrected to match the shipped copy — the Generate tab's disclosure (`components/generate/GenerateForm.tsx`) only ever said IP hashing and public-gallery visibility; it never named Gemini or Google. This decision previously claimed it also disclosed the idea being "sent to Gemini's free tier (where Google may use them to improve its products)," which was never actually shipped — doc drift, not a regression from the Qwen switch (D2, D26). Provider-agnostic wording turned out to be the right call in hindsight, now that the active provider varies by `LLM_PROVIDER`.
+
+**Decision:** All successful user generations appear in the gallery. The Generate tab states upfront that the idea is stored and may appear publicly, and that the IP address is hashed and used only for rate limiting — not which LLM provider processes it. Offensive items are hidden manually with a `hidden` flag. Eval-generated content never appears.
 
 **Why:** A first-time visitor — often a reviewer — sees a populated gallery instead of an empty page.
 
@@ -199,11 +203,13 @@ Each entry records the decision, why it was made, and the alternatives that were
 ### D15 — Server-only database access; RLS on with zero policies
 **Revised 2026-09-15:** access is via `DATABASE_URL` and `pg` (D20), not the Supabase service-role key.
 
+**Revised 2026-09-20:** production host changed from Supabase to Neon (D20). Neon has no equivalent auto-exposed public Data API, so the specific threat this decision was originally written against no longer applies. RLS stays enabled with no policies anyway, now as plain defense-in-depth — it costs nothing and means any future BaaS-style layer with its own row access (added to this project or copied into another) is closed by default rather than open by default.
+
 **Decision:** Only route handlers and local scripts touch Postgres. Every table has RLS enabled and no policies.
 
-**Why:** All reads pass through route handlers that apply filters (hidden items, eval content, metadata-only run views). In production the database is hosted on Supabase, which also exposes tables through its Data API with a public anon key; RLS with no policies means that path reads and writes nothing.
+**Why:** All reads pass through route handlers that apply filters (hidden items, eval content, metadata-only run views). RLS with no policies means any connection that isn't the app's own `pg` pool reads and writes nothing, regardless of how it got a connection.
 
-**Rejected:** *RLS off* — tables readable and writable through Supabase's Data API with the public anon key.
+**Rejected:** *RLS off* — no defense-in-depth if a connection string or future access path other than the app's own `pg` pool is ever introduced.
 
 ---
 
@@ -260,7 +266,9 @@ Each entry records the decision, why it was made, and the alternatives that were
 ### D20 — `pg` (node-postgres) against plain Postgres
 **Added 2026-09-15.**
 
-**Decision:** The app talks to Postgres with `pg` and parameterized SQL. Locally: one Docker `postgres:16-alpine` container on port 5434. Production: Supabase-hosted Postgres through its connection pooler (migrations over a direct connection). Migrations are ordered SQL files applied by a small script.
+**Revised 2026-09-20:** production host changed from Supabase to Neon — same shape (pooled connection string for the app, direct/unpooled one for migrations), no code changes. This app never used any Supabase-specific feature (auth, storage, realtime, the Data API — see D15), so Supabase was an unused feature surface. Two concrete reasons to move: Neon's free-tier compute autosuspends and autoresumes transparently on the next connection, while Supabase's free-tier *project* pauses entirely after 7 days of inactivity and needs a manual dashboard restore — a bad failure mode for a portfolio demo opened sporadically, not continuously; and Vercel's own Postgres offering is Neon under the hood, so `DATABASE_URL` wiring from the Vercel dashboard is more first-party.
+
+**Decision:** The app talks to Postgres with `pg` and parameterized SQL. Locally: one Docker `postgres:16-alpine` container on port 5434. Production: Neon-hosted Postgres through its connection pooler (migrations over a direct connection). Migrations are ordered SQL files applied by a small script.
 
 **Why:**
 - Real transactions in TypeScript: a run's steps, brand, product, and final status are written atomically without moving logic into database functions.
@@ -352,14 +360,16 @@ ESLint `no-restricted-imports` enforces the domain, contracts, and services rule
 
 ---
 
-### D26 — A local-dev-only Qwen (via Groq) adapter exists alongside Gemini
+### D26 — A Qwen (via Groq) adapter exists alongside Gemini, selectable by env var in any environment
 **Added 2026-09-17.**
 
-**Decision:** `lib/adapters/qwen/client.ts` implements `LlmClient` against Groq's OpenAI-compatible API (`qwen/qwen3.8-27b`), selected only when both `NODE_ENV !== "production"` and `LOCAL_LLM_PROVIDER=qwen` are set (`app/api/generate/route.ts`'s `createLlmClient`). Its purpose is exercising the app repeatedly (e.g. live-testing D25's resume flow) without spending Gemini's ~20-100/day free-tier quota; Groq's free tier gives 1,000 requests/day for this model. This does **not** revise D2 — Gemini remains the only provider a deployed build can select, enforced by the `NODE_ENV` check, not just convention.
+**Revised 2026-09-20:** dropped the `NODE_ENV !== "production"` gate — `LLM_PROVIDER=qwen` now selects Qwen in a deployed build too, and the live demo currently runs on it (see D2). Originally scoped local-only specifically to keep the deployed pitch on Gemini regardless of a stray env var; that constraint was intentionally lifted, not accidentally dropped.
 
-**Why:** Gemini's daily quota is small enough that a single testing session can exhaust it before finishing (observed repeatedly the week of 2026-09-15), blocking live verification of anything beyond the first failure. `LlmClient` was already a port (D23), so adding a second adapter is additive.
+**Decision:** `lib/adapters/qwen/client.ts` implements `LlmClient` against Groq's OpenAI-compatible API (`qwen/qwen3.8-27b`), selected whenever `LLM_PROVIDER=qwen` is set (`lib/adapters/createLlmClient.ts`). Originally added to exercise the app repeatedly (e.g. live-testing D25's resume flow) without spending Gemini's ~20-100/day free-tier quota; Groq's free tier gives 1,000 requests/day for this model — since 2026-09-20 that headroom is also why it's the production default.
 
-**Known gap, accepted:** Groq/Qwen exposes no equivalent of Gemini's safety feedback (D22) — the Qwen adapter never produces `prompt_blocked`/`response_blocked`. Moderation guardrails go untested when running against Qwen; that's fine for testing unrelated flows (e.g. resume) but means a Qwen-only test pass is not a substitute for testing against real Gemini before shipping.
+**Why:** Gemini's daily quota is small enough that a single testing session can exhaust it before finishing (observed repeatedly the week of 2026-09-15, and again against the deployed demo on 2026-09-20). `LlmClient` was already a port (D23), so adding a second adapter is additive.
+
+**Known gap, accepted — now a live production trade-off, not just a testing caveat:** Groq/Qwen exposes no equivalent of Gemini's safety feedback (D22) — the Qwen adapter never produces `prompt_blocked`/`response_blocked`. While Qwen is the active provider (currently: production), that moderation layer doesn't run for real traffic, not just for test passes — the app's own banned-word/regulated-claims/famous-brand checks (D17, provider-independent) are what's actually protecting a public demo against that class of input.
 
 **Rejected:**
 - *Self-hosted Qwen via Ollama* — the dev machine has no GPU and only ~14GB free disk; CPU-only inference on a model large enough for reliable JSON-schema output would likely exceed the app's 10s per-call/25s run deadlines.

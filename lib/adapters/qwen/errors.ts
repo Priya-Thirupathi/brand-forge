@@ -1,6 +1,6 @@
-// Local-dev-only alternate provider (see app/api/generate/route.ts's createLlmClient) — not
-// part of D2's production provider decision. Mirrors lib/adapters/gemini/errors.ts's shape so
-// the two adapters stay easy to read side by side.
+// Alternate LlmClient provider, selectable in any environment via LLM_PROVIDER=qwen (see
+// lib/adapters/createLlmClient.ts, D26). Mirrors lib/adapters/gemini/errors.ts's shape so the
+// two adapters stay easy to read side by side.
 
 const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 

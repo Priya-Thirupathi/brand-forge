@@ -9,12 +9,12 @@
 |---|---|
 | Frontend | Next.js 16 (App Router), React 19, Tailwind 4 |
 | Backend | Next.js Route Handlers (Node.js runtime), TypeScript |
-| Database | Postgres 16 via `pg`. Local: Docker `postgres:16-alpine` on port 5434. Production: Supabase-hosted Postgres through its pooler [D20] |
-| LLM | Gemini API, free tier, via `@google/genai`; `strong` / `cheap` tiers from env [D2] |
+| Database | Postgres 16 via `pg`. Local: Docker `postgres:16-alpine` on port 5434. Production: Neon-hosted Postgres through its pooler [D20] |
+| LLM | Gemini API (free tier, via `@google/genai`) or Qwen via Groq (free tier) — `strong` / `cheap` tiers from env, provider chosen by `LLM_PROVIDER` [D2, D26] |
 | Schemas | Zod 4 — API contracts and LLM output shapes [D17] |
 | Evaluation | TypeScript CLI in this repo (Stage 2) [D3] |
 | Tests / CI | Vitest (`unit` and `integration` projects), GitHub Actions |
-| Deploy | Vercel + Supabase Postgres (Stage 3) |
+| Deploy | Vercel + Neon Postgres (Stage 3) |
 
 Model defaults: `MODEL_STRONG=gemini-3.8-flash`, `MODEL_CHEAP=gemini-3.5-flash-lite`. `scripts/check-models.ts` confirms both are available to the configured key. Model IDs are recorded on every step.
 
@@ -413,7 +413,7 @@ A valid token admits the request as `source: "eval"` and **skips `checkRateLimit
   Set the global cap ≤ the project's requests-per-day ÷ 6 (worst case: 3 steps × 2 attempts). Requests with no identifiable IP share one bucket.
 - **Billing:** the Gemini project has no billing account, so no charges are possible (PRD M6).
 - **Client IP:** first address of `x-forwarded-for`, else `x-real-ip`; hashed with `IP_HASH_SALT`; raw IP never stored.
-- **Public data:** Generate-tab notice (stored, public, processed by Gemini's free tier). Moderation: `update products set hidden = true where id = …`. `/api/runs` exposes metadata only.
+- **Public data:** Generate-tab notice (idea stored, may appear publicly; IP hashed for rate limiting only — doesn't name the active LLM provider, D6). Moderation: `update products set hidden = true where id = …`. `/api/runs` exposes metadata only.
 - **Prompt injection:** §5 prompt construction; §7 known limitations.
 - **Eval harness auth (Stage 2):** `X-Eval-Token` must equal `EVAL_TOKEN`, checked with a constant-time comparison (`crypto.timingSafeEqual`), not `===`. `EVAL_TOKEN` unset means this target doesn't accept eval traffic at all — the deployed public demo (Stage 3) can leave it unset, since a valid token bypasses the rate limits (§8, §9) that otherwise bound the project's free-tier quota.
 
@@ -422,14 +422,16 @@ A valid token admits the request as `source: "eval"` and **skips `checkRateLimit
 - **Error handling:** every Gemini call has a timeout; the stream always ends with `result` or `error`; no unhandled rejections.
 - **Secrets:** env vars only; `.env.local.example` committed.
 - **Local setup:** `docker compose up -d db` → `npm run migrate` → `npm run seed` → `npm run dev`.
-- **Deployment (Stage 3):** migrations and seed over Supabase's direct connection; the app uses the pooled connection string; `vercel deploy`.
+- **Deployment (Stage 3):** migrations and seed over Neon's direct (unpooled) connection; the app uses the pooled connection string; `vercel deploy`.
 
 ### 12. Environment Variables
 | Variable | Default | Notes |
 |---|---|---|
-| `GEMINI_API_KEY` | — | free-tier project, no billing |
-| `MODEL_STRONG` | `gemini-3.8-flash` | |
-| `MODEL_CHEAP` | `gemini-3.5-flash-lite` | |
+| `LLM_PROVIDER` | unset (Gemini) | set to `qwen` to select the Groq/Qwen adapter instead, in any environment [D2, D26] |
+| `GEMINI_API_KEY` | — | free-tier project, no billing; required unless `LLM_PROVIDER=qwen` |
+| `GROQ_API_KEY` | — | free tier; required when `LLM_PROVIDER=qwen` |
+| `MODEL_STRONG` | `gemini-3.8-flash` | set to `qwen/qwen3.8-27b` when `LLM_PROVIDER=qwen` |
+| `MODEL_CHEAP` | `gemini-3.5-flash-lite` | set to `qwen/qwen3.8-27b` when `LLM_PROVIDER=qwen` (Groq exposes one model, no separate cheap tier) |
 | `DATABASE_URL` | local compose URL | server-side only |
 | `TEST_DATABASE_URL` | local compose test DB | integration tests |
 | `IP_HASH_SALT` | — | ≥ 16 chars |

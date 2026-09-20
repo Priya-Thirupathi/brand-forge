@@ -60,12 +60,15 @@ npm run test:integration   # needs the test database above running
 CI (`.github/workflows/ci.yml`) runs all four against a fresh Postgres service container on
 every push and pull request.
 
-## Local-dev-only: testing against Qwen instead of Gemini
+## Alternate provider: Qwen (via Groq) instead of Gemini
 
-Gemini's free tier has a small daily quota that a single testing session can exhaust. To test
-without spending it, `.env.local.example` has a commented-out block that points the app at Qwen
-(via [Groq](https://console.groq.com)'s free tier) instead. This never takes effect in a
-production build regardless of those variables being set — see D26 in `DECISIONS.md`.
+Gemini's free tier has a small daily quota that a single testing session (or a public demo) can
+exhaust. `.env.local.example` has a commented-out block that points the app at Qwen (via
+[Groq](https://console.groq.com)'s free tier) instead — set `LLM_PROVIDER=qwen` and
+`GROQ_API_KEY` to switch. This works in any environment, including production — see D26 in
+`DECISIONS.md`, and its accepted gap: Groq/Qwen exposes no equivalent of Gemini's safety feedback
+(D22), so moderation guardrails beyond the app's own banned-word/claims checks don't get
+exercised while this provider is active.
 
 ## Evaluation harness (Stage 2)
 

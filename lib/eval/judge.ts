@@ -8,10 +8,10 @@ import type { LlmClient } from "@/lib/services/ports";
 // scoring a succeeded case's actual output against the idea it came from.
 export function resolveJudgeModel(): string {
   if (process.env.JUDGE_MODEL) return process.env.JUDGE_MODEL;
-  if (process.env.NODE_ENV !== "production" && process.env.LOCAL_LLM_PROVIDER === "qwen") {
-    // D26: Qwen (via Groq) exposes one model locally, no distinct "cheap" tier — using it for
-    // both generation and judging trades TRD.md §9's "preferably a different generation"
-    // preference for not burning Gemini's scarce daily quota during local eval development.
+  if (process.env.LLM_PROVIDER === "qwen") {
+    // D26 (revised 2026-09-20): Qwen (via Groq) exposes one model, no distinct "cheap" tier —
+    // using it for both generation and judging trades TRD.md §9's "preferably a different
+    // generation" preference for not burning Gemini's scarce daily quota, in production now too.
     return process.env.MODEL_CHEAP ?? "qwen/qwen3.8-27b";
   }
   return "gemini-3.5-flash-lite";

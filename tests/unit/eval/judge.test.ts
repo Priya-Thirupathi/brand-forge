@@ -46,14 +46,14 @@ describe("resolveJudgeModel", () => {
 
   it("defaults to gemini-3.5-flash-lite outside local Qwen dev mode", () => {
     vi.stubEnv("JUDGE_MODEL", undefined);
-    vi.stubEnv("LOCAL_LLM_PROVIDER", undefined);
+    vi.stubEnv("LLM_PROVIDER", undefined);
     expect(resolveJudgeModel()).toBe("gemini-3.5-flash-lite");
   });
 
   it("falls back to MODEL_CHEAP in local Qwen dev mode (D26)", () => {
     vi.stubEnv("JUDGE_MODEL", undefined);
     vi.stubEnv("NODE_ENV", "development");
-    vi.stubEnv("LOCAL_LLM_PROVIDER", "qwen");
+    vi.stubEnv("LLM_PROVIDER", "qwen");
     vi.stubEnv("MODEL_CHEAP", "qwen/qwen3.8-27b");
     expect(resolveJudgeModel()).toBe("qwen/qwen3.8-27b");
   });
