@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   createEvalRun,
   evalRunExists,
+  findEvalCaseBrandId,
   finishEvalRun,
   getEvalRun,
   getLatestBaseline,
@@ -46,6 +47,8 @@ function resultRow(evalRunId: string, overrides: Partial<EvalResultRow> = {}): E
     distinctiveness_score: 0.8,
     name_uniqueness: 1,
     judge_reason: "fits the idea well",
+    tone_fit_score: null,
+    tone_fit_reason: null,
     ...overrides,
   };
 }
@@ -60,6 +63,7 @@ const aggregate: EvalAggregate = {
   mean_relevance: 0.9,
   mean_distinctiveness: 0.8,
   mean_name_uniqueness: 1,
+      mean_tone_fit: null,
   latency_ms_p50: 1200,
   latency_ms_p95: 1200,
   first_event_ms_p50: 300,
@@ -142,6 +146,7 @@ describe("evalStore", () => {
       distinctiveness: { baseline_mean: 0.8, candidate_mean: 0.1, delta: -0.7, ci_low: -0.8, ci_high: -0.6, flagged: true },
       outcome_match_rate: { baseline_mean: 1, candidate_mean: 1, delta: 0, ci_low: 0, ci_high: 0, flagged: false },
       latency_ms: { baseline_mean: 1000, candidate_mean: 1000, delta: 0, ci_low: 0, ci_high: 0, flagged: false },
+      tone_fit: null,
     };
     await setEvalRunComparison(testPool, id, comparison);
     const row = await getEvalRun(testPool, id);
@@ -156,5 +161,48 @@ describe("evalStore", () => {
     expect(summaries).toHaveLength(1);
     expect(summaries[0].label).toBe("keep-me");
     expect(summaries[0]).not.toHaveProperty("eval_results");
+  });
+});
+
+describe("findEvalCaseBrandId (D31)", () => {
+  // A consistency case needs the brand its prerequisite created. That link only exists through
+  // products.run_id, so this walks eval_results → products → brands the way the runner does
+  // when the prerequisite ran in an earlier chunk or on an earlier day.
+  async function seedSucceededCase(evalRunId: string, caseId: string, repeat: number, brandName: string): Promise<string> {
+    const { rows: runRows } = await testPool.query<{ id: string }>(
+      `insert into runs (source, idea, status, prompt_versions, client_ip_hash) values ('eval', 'idea', 'succeeded', '{}'::jsonb, 'h') returning id`,
+    );
+    const runId = runRows[0].id;
+    const { rows: brandRows } = await testPool.query<{ id: string }>(
+      `insert into brands (name, tone_notes, source) values ($1, '{"voice":[],"audience":"a","personality":"p","avoid":[]}'::jsonb, 'eval') returning id`,
+      [brandName],
+    );
+    const brandId = brandRows[0].id;
+    await testPool.query(
+      `insert into products (brand_id, run_id, feasibility_snapshot, idea, tagline, description, packaging, source)
+       values ($1, $2, '{}'::jsonb, 'idea', 't', 'd', '{}'::jsonb, 'eval')`,
+      [brandId, runId],
+    );
+    await insertEvalResult(testPool, resultRow(evalRunId, { case_id: caseId, repeat, run_id: runId }));
+    return brandId;
+  }
+
+  it("returns the brand from the earliest successful repeat", async () => {
+    const evalRunId = await createEvalRun(testPool, newEvalRun());
+    const firstBrandId = await seedSucceededCase(evalRunId, "n10", 1, "Ridge");
+    await seedSucceededCase(evalRunId, "n10", 2, "Summit");
+
+    // Deterministic across repeats on purpose — otherwise which brand c01 inherits would
+    // depend on row order, and two eval runs of the same fixture wouldn't be comparable.
+    expect(await findEvalCaseBrandId(testPool, evalRunId, "n10")).toBe(firstBrandId);
+  });
+
+  it("returns null when the case never passed, and ignores other eval runs' rows", async () => {
+    const evalRunId = await createEvalRun(testPool, newEvalRun());
+    const otherEvalRunId = await createEvalRun(testPool, newEvalRun());
+    await seedSucceededCase(otherEvalRunId, "n10", 1, "Elsewhere");
+    await insertEvalResult(testPool, resultRow(evalRunId, { case_id: "n10", actual_outcome: "reject", run_id: null }));
+
+    expect(await findEvalCaseBrandId(testPool, evalRunId, "n10")).toBeNull();
   });
 });

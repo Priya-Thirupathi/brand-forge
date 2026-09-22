@@ -465,6 +465,35 @@ Naming is skipped through the same switch a resume and a follow-up already use �
 
 ---
 
+### D31 — Consistency eval: judge the prose against the voice, not the voice against itself
+
+**Added 2026-09-23.** Closes the half of Stage 5 item 2 that D29 deliberately left open.
+
+**Decision:** A fixture case may carry `follow_up_to`, naming an **earlier** case in the same fixture. The runner takes that case's brand and re-submits the new case as a D29 follow-up (`follow_up_brand_id`), then scores it on a new dimension, `tone_fit`, from a second judge call. Two such cases exist: `c01` (a t-shirt under n10's national-parks *candle* brand — cross-category, the hard one) and `c02` (a snack bar under n01's sparkling-water brand — adjacent, the easy one). They are paired on purpose: **if `tone_fit` can't separate c01 from c02, the judge dimension is the thing to distrust, not the generator.**
+
+**Why the judge scores the prose and not the `tone_notes`:** the obvious implementation — compare the follow-up's `tone_notes` to the brand's — always returns 1.0 and measures nothing, because D29 *substitutes* the stored notes and discards whatever the model returned. Equality there is a property of the code, not of the output. The only genuinely unknown thing is whether the copy the model wrote actually **reads** in that voice, so that is what the judge is asked, with an explicit instruction not to reward the copy for parroting the voice definition's own adjectives back.
+
+**Why a second judge call rather than a third field on the existing rubric:** it asks a different question about different inputs (copy vs. a given voice, with no reference to the idea's novelty), and only 2 of 22 cases can answer it. Folding it in would make all 20 ordinary cases carry a dimension they can't score, and would change the main rubric's prompt — invalidating every existing baseline's relevance and distinctiveness numbers for a feature unrelated to them.
+
+**Why a follow-up records no `distinctiveness_score` or `name_uniqueness`:** it skips naming, so its name was produced by the case it inherits from. Scoring it again would count one name twice across the fixture and pollute exactly the metric M4's sensitivity proof depends on. Relevance is still recorded — the copy genuinely is about this case's own idea.
+
+**Why `follow_up_to` is an optional field, not a discriminated union on `kind`:** a union means adding `kind: "single"` to all 20 existing case literals, which changes their JSON and therefore `FIXTURE_VERSION`. With an optional field the existing literals are byte-identical, and `aggregate.ts`'s `pairedValues` already drops case ids missing from either side — so a post-D31 run still compares cleanly against a pre-D31 baseline on the cases they share.
+
+**Why `comparison.tone_fit` is nullable when no other dimension is:** `compareMetric` throws on empty paired input rather than compare misaligned cases, and **every baseline recorded before this decision has no consistency cases to pair on**. Null is the honest answer there; a zero-effect delta would be a fabricated one.
+
+**Why the brand id is re-read from Postgres and not just held in memory:** `--resume` and D3's serverless chunking both mean the prerequisite case may have run in a different process entirely. `findEvalCaseBrandId` walks `eval_results → products → brands`, ordered by repeat so a case with several successful repeats always resolves to the same brand — otherwise which brand `c01` inherits would depend on row order, and two runs of the same fixture wouldn't be comparable.
+
+**Why an unresolvable prerequisite records an `error` row instead of degrading:** if the case named by `follow_up_to` was rejected or errored, there is no brand. Running the follow-up anyway would generate a fresh brand and record a `tone_fit` for a voice nothing actually inherited — a number that looks like evidence and isn't. The row is recorded as `error`, the app is never called, no quota is spent, and the CLI prints which prerequisite failed.
+
+**Rejected:**
+- *Comparing `tone_notes` to `tone_notes`* — always 1.0 by construction; measures the substitution code, not the model.
+- *A `kind` discriminated union on `EvalCase`* — churns all 20 existing literals and the fixture hash for no behavioural gain.
+- *Extending the existing judge rubric* — changes the prompt every baseline's relevance/distinctiveness was measured under.
+- *Scoring distinctiveness on follow-ups* — double-counts an inherited name into the sensitivity proof's own metric.
+- *A separate fixture and eval suite for consistency cases* — a second runner, second aggregate and second baseline lineage, to avoid a pairing problem `pairedValues` already solves.
+
+---
+
 ## Open items — need a human
 1. **Quota numbers.** Read the project's requests-per-minute and requests-per-day for both models on the AI Studio rate-limit page, then set `GLOBAL_DAILY_GENERATION_CAP` ≤ RPD ÷ 6 (worst case: 3 steps × 2 attempts).
 2. **Feasibility numbers.** Seed values are labelled illustrative but need a plausibility pass.

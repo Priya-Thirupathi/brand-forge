@@ -23,6 +23,8 @@ function row(overrides: Partial<EvalResultRow> = {}): EvalResultRow {
     distinctiveness_score: 0.7,
     name_uniqueness: 1,
     judge_reason: "fits",
+    tone_fit_score: null,
+    tone_fit_reason: null,
     ...overrides,
   };
 }
@@ -92,5 +94,40 @@ describe("compareEvalRuns", () => {
     const candidate = Array.from({ length: 10 }, (_, i) => row({ case_id: `n${i}`, latency_ms: 1050 })); // +5%
     const comparison = compareEvalRuns("baseline-id", baseline, candidate);
     expect(comparison.latency_ms.flagged).toBe(false);
+  });
+});
+
+describe("tone fit (D31)", () => {
+  it("averages only the rows that have a tone_fit, and stays null when none do", () => {
+    const withTone = computeAggregate([
+      row({ case_id: "n01" }),
+      row({ case_id: "c01", tone_fit_score: 0.4, distinctiveness_score: null }),
+      row({ case_id: "c02", tone_fit_score: 0.8, distinctiveness_score: null }),
+    ]);
+    expect(withTone.mean_tone_fit).toBeCloseTo(0.6);
+
+    // "Not measured" has to stay distinguishable from "measured as terrible" — a fixture with
+    // no consistency cases reports null, not 0.
+    expect(computeAggregate([row({ case_id: "n01" })]).mean_tone_fit).toBeNull();
+  });
+
+  it("skips the tone_fit comparison rather than throwing when the baseline has no consistency cases", () => {
+    // compareMetric throws on empty paired input by design, and every baseline recorded before
+    // D31 legitimately has nothing to pair here.
+    const baseline = [row({ case_id: "n01", relevance_score: 0.8 })];
+    const candidate = [row({ case_id: "n01", relevance_score: 0.8 }), row({ case_id: "c01", tone_fit_score: 0.5 })];
+
+    const comparison = compareEvalRuns("baseline-1", baseline, candidate);
+    expect(comparison.tone_fit).toBeNull();
+    expect(comparison.relevance.baseline_mean).toBeCloseTo(0.8);
+  });
+
+  it("compares tone_fit when both runs scored the same consistency case", () => {
+    const baseline = [row({ case_id: "n01" }), row({ case_id: "c01", tone_fit_score: 0.3 })];
+    const candidate = [row({ case_id: "n01" }), row({ case_id: "c01", tone_fit_score: 0.9 })];
+
+    const comparison = compareEvalRuns("baseline-1", baseline, candidate);
+    expect(comparison.tone_fit?.delta).toBeCloseTo(0.6);
+    expect(comparison.tone_fit?.flagged).toBe(true);
   });
 });

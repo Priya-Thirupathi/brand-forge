@@ -79,7 +79,7 @@ Secondary audience: a **reviewer** (hiring manager or engineer) evaluating the p
 
 **Stage 5 — Extensions (in order, each independently demoable)**
 1. ✅ Recorded-run replay: when the daily quota is exhausted, a visitor can watch a stored run stream with its original timings. [D28]
-2. 🟡 Brand follow-ups with tone memory. [D10, D29] — the live feature is done; consistency eval cases (below) not started, needs its own scoping pass (the eval fixture's `EvalCase` shape has no way to represent a two-idea/existing-brand case today).
+2. ✅ Brand follow-ups with tone memory, plus consistency eval cases. [D10, D29, D31]
 3. ✅ Alternate-name regenerate. [D8, D30]
 4. Per-step routing experiment, strong vs. cheap model. [D12]
 5. Judge calibration against 20 hand-labelled outputs.

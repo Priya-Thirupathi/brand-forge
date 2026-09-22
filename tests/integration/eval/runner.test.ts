@@ -46,6 +46,22 @@ function ndjsonResponse(events: GenerateEvent[]): Response {
   return new Response(events.map((e) => JSON.stringify(e)).join("\n") + "\n", { status: 200 });
 }
 
+// Answers both judge prompts off one client, picking by which system prompt it was handed —
+// the tone-fit judge (D31) is a second call with a different schema, not another field on the
+// main rubric's response.
+function fakeDualJudge(relevance: number, distinctiveness: number, toneFit: number): LlmClient {
+  const usage = { promptTokens: 1, candidatesTokens: 1, thoughtsTokens: 0, totalTokens: 2 };
+  return {
+    generateJson: vi.fn(async (request: { system: string }): Promise<LlmOutcome> => ({
+      kind: "ok",
+      json: request.system.includes("brand voice") ? { tone_fit: toneFit, reason: "fake tone judge" } : { relevance, distinctiveness, reason: "fake judge" },
+      usage,
+      transportRetries: 0,
+      latencyMs: 5,
+    })),
+  } as unknown as LlmClient;
+}
+
 function fakeJudge(relevance: number, distinctiveness: number): LlmClient {
   const outcome: LlmOutcome = { kind: "ok", json: { relevance, distinctiveness, reason: "fake judge" }, usage: { promptTokens: 1, candidatesTokens: 1, thoughtsTokens: 0, totalTokens: 2 }, transportRetries: 0, latencyMs: 5 };
   return { generateJson: vi.fn().mockResolvedValue(outcome) };
@@ -218,5 +234,76 @@ function existingRow(evalRunId: string, runId: string): EvalResultRow {
     distinctiveness_score: 0.5,
     name_uniqueness: 1,
     judge_reason: "already recorded",
+    tone_fit_score: null,
+    tone_fit_reason: null,
   };
 }
+
+describe("runEvalFixture consistency cases (D31)", () => {
+  const FOLLOW_UP_CASES: EvalCase[] = [
+    { id: "c-pass", category: "candle", idea: "a lavender candle for people who have trouble sleeping", expected_outcome: "pass" },
+    { id: "c-follow", category: "t_shirt", idea: "a follow-up shirt for the same brand", expected_outcome: "pass", follow_up_to: "c-pass" },
+  ];
+
+  it("attaches the follow-up to the earlier case's brand and scores tone_fit instead of distinctiveness", async () => {
+    const passRunId = await seedRun("succeeded");
+    const followRunId = await seedRun("succeeded");
+    const bodies: Record<string, unknown>[] = [];
+    const doFetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      bodies.push(body);
+      const runId = body.follow_up_brand_id ? followRunId : passRunId;
+      return ndjsonResponse([{ type: "run_started", run_id: runId }, { type: "result", result: buildResult(runId, "succeeded") }]);
+    }) as unknown as typeof fetch;
+
+    const evalRunId = await createEvalRun(testPool, { label: "t", gitSha: "s", target: "http://x", fixtureVersion: "v", repeats: 1 });
+    await runEvalFixture({
+      target: "http://x", evalToken: "tok", evalRunId, repeats: 1, rpm: 10_000,
+      pool: testPool, judgeClient: fakeDualJudge(0.9, 0.8, 0.7), fetchImpl: doFetch, cases: FOLLOW_UP_CASES,
+    });
+
+    // The first case posts an ordinary body; the second carries the brand the first produced.
+    expect(bodies[0].follow_up_brand_id).toBeUndefined();
+    expect(bodies[1].follow_up_brand_id).toBe("brand-1");
+
+    const rows = await listEvalResults(testPool, evalRunId);
+    const follow = rows.find((r) => r.case_id === "c-follow");
+    expect(follow?.tone_fit_score).toBe(0.7);
+    expect(follow?.tone_fit_reason).toBe("fake tone judge");
+    // A follow-up inherits its name, so scoring it again would double-count one name across the
+    // fixture and pollute the metric the sensitivity proof depends on.
+    expect(follow?.distinctiveness_score).toBeNull();
+    expect(follow?.name_uniqueness).toBeNull();
+    // Relevance still applies — the copy really is about this case's own idea.
+    expect(follow?.relevance_score).toBe(0.9);
+
+    const ordinary = rows.find((r) => r.case_id === "c-pass");
+    expect(ordinary?.tone_fit_score).toBeNull();
+    expect(ordinary?.distinctiveness_score).toBe(0.8);
+  });
+
+  it("records an honest error row, and spends nothing, when the prerequisite case made no brand", async () => {
+    const rejectRunId = await seedRun("rejected");
+    const doFetch = vi.fn(async () =>
+      ndjsonResponse([{ type: "run_started", run_id: rejectRunId }, { type: "result", result: buildResult(rejectRunId, "rejected") }]),
+    ) as unknown as typeof fetch;
+
+    const evalRunId = await createEvalRun(testPool, { label: "t", gitSha: "s", target: "http://x", fixtureVersion: "v", repeats: 1 });
+    const unresolved: string[] = [];
+    await runEvalFixture({
+      target: "http://x", evalToken: "tok", evalRunId, repeats: 1, rpm: 10_000,
+      pool: testPool, judgeClient: fakeDualJudge(0.9, 0.8, 0.7), fetchImpl: doFetch, cases: FOLLOW_UP_CASES,
+      onEvent: (event) => {
+        if (event.type === "case_unresolved") unresolved.push(event.caseId);
+      },
+    });
+
+    expect(unresolved).toEqual(["c-follow"]);
+    // Only the prerequisite was ever generated — the follow-up never reached the app, rather
+    // than silently running as a fresh generation and recording a tone_fit nothing inherited.
+    expect(doFetch).toHaveBeenCalledTimes(1);
+    const follow = (await listEvalResults(testPool, evalRunId)).find((r) => r.case_id === "c-follow");
+    expect(follow?.actual_outcome).toBe("error");
+    expect(follow?.tone_fit_score).toBeNull();
+  });
+});

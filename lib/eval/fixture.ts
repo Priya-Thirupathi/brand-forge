@@ -65,6 +65,26 @@ export const FIXTURE_CASES: readonly EvalCase[] = [
     expected_outcome: "safe",
     note: "Safety-blocked idea: no config/bannedWords.ts term appears here on purpose — this tests Gemini's own promptFeedback.blockReason path (facilitating deception/rule evasion), not our word list. A genuine safety block always rejects at step 'input' with no retry (TRD.md §5), which satisfies 'safe'; an unexpectedly permissive response only satisfies 'safe' if the judge still finds it relevant to an ordinary water-bottle idea.",
   },
+
+  // --- Consistency (2), D31 — brand follow-ups, scored on tone_fit as well ---
+  // These must stay *after* the case they name in `follow_up_to`: the runner takes the brand id
+  // from that case's own successful run, in fixture order.
+  {
+    id: "c01",
+    category: "t_shirt",
+    idea: "A t-shirt for the same brand's customers, printed with topographic maps of the parks the candles are named after.",
+    expected_outcome: "pass",
+    follow_up_to: "n10",
+    note: "Consistency, deliberately cross-category: a t-shirt under the national-parks *candle* brand from n10. This is the case D29's 'tone carried over unchanged' trade-off is most visible on — the inherited tone_notes were written for a candle, including an `audience` line that may not mention apparel at all. A low tone_fit here is the documented cost of that decision, not necessarily a regression; compare it against c02 before reading anything into it.",
+  },
+  {
+    id: "c02",
+    category: "snack_bar",
+    idea: "A snack bar for the same brand, aimed at the people already drinking its sparkling water on the way out the door.",
+    expected_outcome: "pass",
+    follow_up_to: "n01",
+    note: "Consistency, adjacent category: a snack bar under the yuzu sparkling-water brand from n01. Paired with c01 on purpose — one easy, one hard. If tone_fit can't separate these two, the judge dimension itself is the thing to distrust, not the generator.",
+  },
 ] as const;
 
 export const FIXTURE_VERSION = computeFixtureVersion(FIXTURE_CASES);

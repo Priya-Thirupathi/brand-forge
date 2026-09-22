@@ -33,6 +33,13 @@ export const EvalCaseSchema = z.object({
   // Non-empty only for the 6 adversarial cases — documents *why* this case exists, shown in
   // `compare` output when a case's outcome doesn't match, never sent to the app.
   note: z.string().optional(),
+  // D31: the id of an *earlier* case in this same fixture whose brand this case attaches to,
+  // making it a D29 brand follow-up (`follow_up_brand_id`) rather than a fresh generation.
+  // Deliberately an optional field rather than a discriminated union on `kind`: every existing
+  // case's literal stays byte-identical, so FIXTURE_VERSION reflects the cases that were
+  // actually added and old baselines still pair on the case ids they share (lib/eval/
+  // aggregate.ts's pairedValues drops unmatched ids rather than mispairing them).
+  follow_up_to: z.string().optional(),
 });
 export type EvalCase = z.infer<typeof EvalCaseSchema>;
 
@@ -42,6 +49,16 @@ export const JudgeResultSchema = z.object({
   reason: z.string(),
 });
 export type JudgeResult = z.infer<typeof JudgeResultSchema>;
+
+// D31: a separate judge call, not another field on JudgeResult. It answers a different question
+// about different inputs (the copy against the brand's fixed tone_notes, with no reference to
+// the idea's novelty), and only follow-up cases have anything to ask it — folding it into the
+// main rubric would mean every ordinary case carried a dimension it can't score.
+export const ToneFitResultSchema = z.object({
+  tone_fit: z.number().min(0).max(1),
+  reason: z.string(),
+});
+export type ToneFitResult = z.infer<typeof ToneFitResultSchema>;
 
 // One eval_results row (TRD.md §4) — what the runner persists per case × repeat.
 export const EvalResultRowSchema = z.object({
@@ -64,6 +81,10 @@ export const EvalResultRowSchema = z.object({
   distinctiveness_score: z.number().min(0).max(1).nullable(),
   name_uniqueness: z.number().min(0).max(1).nullable(),
   judge_reason: z.string().nullable(),
+  // D31: non-null only on a follow-up case that succeeded — how well the copy reads in the
+  // inherited brand voice.
+  tone_fit_score: z.number().min(0).max(1).nullable(),
+  tone_fit_reason: z.string().nullable(),
 });
 export type EvalResultRow = z.infer<typeof EvalResultRowSchema>;
 
@@ -88,6 +109,8 @@ export const EvalAggregateSchema = z.object({
   mean_relevance: z.number().nullable(),
   mean_distinctiveness: z.number().nullable(),
   mean_name_uniqueness: z.number().nullable(),
+  // D31: null on a fixture with no follow-up cases, which is every run before they existed.
+  mean_tone_fit: z.number().nullable(),
   latency_ms_p50: z.number().nullable(),
   latency_ms_p95: z.number().nullable(),
   first_event_ms_p50: z.number().nullable(),
@@ -103,6 +126,11 @@ export const EvalComparisonSchema = z.object({
   // Paired per fixture case (D18) using each case's *mean* latency across its repeats, not a
   // literal p50 — true percentiles live on EvalAggregate.latency_ms_p50/p95 for the whole run.
   latency_ms: MetricDeltaSchema,
+  // D31: nullable, unlike every dimension above, because it needs follow-up cases present *and
+  // scored* on both sides. compareMetric throws on empty paired input by design (it would
+  // rather fail than compare misaligned cases), so a run compared against any pre-D31 baseline
+  // records null here instead of a fabricated zero-effect delta.
+  tone_fit: MetricDeltaSchema.nullable(),
 });
 export type EvalComparison = z.infer<typeof EvalComparisonSchema>;
 

@@ -1,11 +1,11 @@
 import type { Pool } from "pg";
 import type { GenerateEvent, GenerateResult } from "@/lib/contracts/generate";
-import type { EvalCase, EvalResultRow, JudgeResult } from "@/lib/contracts/eval";
+import type { EvalCase, EvalResultRow, JudgeResult, ToneFitResult } from "@/lib/contracts/eval";
 import type { LlmClient } from "@/lib/services/ports";
 import { readNdjsonEvents } from "@/lib/client/ndjsonReader";
-import { hasEvalResult, insertEvalResult, setEvalRunMeta, type EvalRunModels } from "@/lib/adapters/postgres/evalStore";
+import { findEvalCaseBrandId, hasEvalResult, insertEvalResult, setEvalRunMeta, type EvalRunModels } from "@/lib/adapters/postgres/evalStore";
 import { FIXTURE_CASES } from "./fixture";
-import { judgeBrand, resolveJudgeModel } from "./judge";
+import { judgeBrand, judgeToneFit, resolveJudgeModel } from "./judge";
 import { nameUniqueness, outcomeMatches } from "./metrics";
 
 // TRD.md §9 "CLI"/"Quota-aware": calls the running app over HTTP as a black box (D3), one case
@@ -40,7 +40,11 @@ export interface RunnerOptions {
 export type RunnerEvent =
   | { type: "case_skipped"; caseId: string; repeat: number }
   | { type: "case_started"; caseId: string; repeat: number }
-  | { type: "case_finished"; caseId: string; repeat: number; row: EvalResultRow };
+  | { type: "case_finished"; caseId: string; repeat: number; row: EvalResultRow }
+  // D31: a consistency case whose `follow_up_to` case never produced a brand (it errored, was
+  // rejected, or hasn't run yet). Reported rather than silently degraded into a fresh
+  // generation, which would record a tone_fit for a brand nothing actually inherited.
+  | { type: "case_unresolved"; caseId: string; repeat: number; followUpTo: string };
 
 export interface RunFixtureResult {
   completed: boolean;
@@ -54,6 +58,9 @@ export async function runEvalFixture(options: RunnerOptions): Promise<RunFixture
   const doFetch = options.fetchImpl ?? fetch;
   const cases = options.cases ?? FIXTURE_CASES;
   let metaRecorded = false;
+  // D31: brand ids this process has seen, so the common case (prerequisite ran moments ago in
+  // this same loop) costs no query. Misses fall back to the database — see resolveFollowUpBrand.
+  const brandIdByCase = new Map<string, string>();
 
   for (const evalCase of cases) {
     for (let repeat = 1; repeat <= options.repeats; repeat++) {
@@ -68,9 +75,26 @@ export async function runEvalFixture(options: RunnerOptions): Promise<RunFixture
       }
 
       options.onEvent?.({ type: "case_started", caseId: evalCase.id, repeat });
+
+      let followUpBrandId: string | undefined;
+      if (evalCase.follow_up_to) {
+        followUpBrandId = await resolveFollowUpBrand(options, brandIdByCase, evalCase.follow_up_to);
+        if (!followUpBrandId) {
+          // No quota is spent and no pacing slot consumed: there is nothing to generate against.
+          options.onEvent?.({ type: "case_unresolved", caseId: evalCase.id, repeat, followUpTo: evalCase.follow_up_to });
+          const row = buildRow(options.evalRunId, evalCase, repeat, emptyOutcome("error", false));
+          await insertEvalResult(options.pool, row);
+          options.onEvent?.({ type: "case_finished", caseId: evalCase.id, repeat, row });
+          continue;
+        }
+      }
+
       const throttled = await pace.wait();
-      const { row, resultMeta } = await runOneCase(doFetch, options, evalCase, repeat, throttled);
+      const { row, resultMeta, brandId } = await runOneCase(doFetch, options, evalCase, repeat, throttled, followUpBrandId);
       await insertEvalResult(options.pool, row);
+      // Only the first successful repeat's brand is remembered, matching findEvalCaseBrandId's
+      // `order by repeat` — otherwise a later repeat would silently change what c01 inherits.
+      if (brandId && !brandIdByCase.has(evalCase.id)) brandIdByCase.set(evalCase.id, brandId);
 
       if (!metaRecorded && resultMeta && Object.keys(resultMeta.models).length > 0) {
         await setEvalRunMeta(options.pool, options.evalRunId, {
@@ -86,6 +110,18 @@ export async function runEvalFixture(options: RunnerOptions): Promise<RunFixture
   return { completed: true };
 }
 
+async function resolveFollowUpBrand(
+  options: RunnerOptions,
+  brandIdByCase: Map<string, string>,
+  followUpTo: string,
+): Promise<string | undefined> {
+  const remembered = brandIdByCase.get(followUpTo);
+  if (remembered) return remembered;
+  const stored = await findEvalCaseBrandId(options.pool, options.evalRunId, followUpTo);
+  if (stored) brandIdByCase.set(followUpTo, stored);
+  return stored ?? undefined;
+}
+
 interface CaseOutcomeData {
   runId: string | null;
   actualOutcome: EvalResultRow["actual_outcome"];
@@ -94,6 +130,7 @@ interface CaseOutcomeData {
   qualityRetries: number | null;
   tokens: { input: number; output: number; thinking: number } | null;
   judge: JudgeResult | null;
+  toneFit: ToneFitResult | null;
   nameCandidates: readonly string[];
   throttled: boolean;
 }
@@ -104,7 +141,13 @@ async function runOneCase(
   evalCase: EvalCase,
   repeat: number,
   throttled: boolean,
-): Promise<{ row: EvalResultRow; resultMeta?: { promptVersions: GenerateResult["meta"]["prompt_versions"]; models: EvalRunModels } }> {
+  followUpBrandId?: string,
+): Promise<{
+  row: EvalResultRow;
+  resultMeta?: { promptVersions: GenerateResult["meta"]["prompt_versions"]; models: EvalRunModels };
+  // The brand this case created, for a later consistency case to attach to (D31).
+  brandId?: string;
+}> {
   const headers: Record<string, string> = {
     "content-type": "application/json",
     accept: "application/x-ndjson",
@@ -117,7 +160,11 @@ async function runOneCase(
   const response = await doFetch(`${options.target}/api/generate`, {
     method: "POST",
     headers,
-    body: JSON.stringify({ idea: evalCase.idea, category: evalCase.category }),
+    body: JSON.stringify({
+      idea: evalCase.idea,
+      category: evalCase.category,
+      ...(followUpBrandId ? { follow_up_brand_id: followUpBrandId } : {}),
+    }),
   });
 
   // Admission itself failed (400/401/404/429/misconfigured target) — never reached a stream,
@@ -140,6 +187,7 @@ async function runOneCase(
     const nameCandidates = result.name_candidates?.map((c) => c.name) ?? [];
 
     let judge: JudgeResult | null = null;
+    let toneFit: ToneFitResult | null = null;
     if (actualOutcome === "pass" && result.brand && result.product) {
       const outcome = await judgeBrand(
         options.judgeClient,
@@ -147,6 +195,22 @@ async function runOneCase(
         Date.now() + 15_000,
       );
       if (outcome.kind === "ok") judge = outcome.result;
+
+      // D31: only a follow-up has an inherited voice to be consistent with. A second judge
+      // call, so this costs nothing on the 20 ordinary cases.
+      if (followUpBrandId) {
+        const toneOutcome = await judgeToneFit(
+          options.judgeClient,
+          {
+            toneNotes: result.brand.tone_notes,
+            name: result.brand.name,
+            tagline: result.product.tagline,
+            description: result.product.description,
+          },
+          Date.now() + 15_000,
+        );
+        if (toneOutcome.kind === "ok") toneFit = toneOutcome.result;
+      }
     }
 
     const row = buildRow(options.evalRunId, evalCase, repeat, {
@@ -157,10 +221,11 @@ async function runOneCase(
       qualityRetries: result.guardrails.quality_retries,
       tokens: result.meta.tokens,
       judge,
+      toneFit,
       nameCandidates,
       throttled,
     });
-    return { row, resultMeta: { promptVersions: result.meta.prompt_versions, models: result.meta.models } };
+    return { row, resultMeta: { promptVersions: result.meta.prompt_versions, models: result.meta.models }, brandId: result.brand?.id };
   }
 
   // A genuine run-level error (TRD.md §5 always ends the stream with `result` or `error`) —
@@ -174,6 +239,7 @@ async function runOneCase(
       qualityRetries: null,
       tokens: null,
       judge: null,
+      toneFit: null,
       nameCandidates: [],
       throttled,
     }),
@@ -181,11 +247,16 @@ async function runOneCase(
 }
 
 function emptyOutcome(actualOutcome: EvalResultRow["actual_outcome"], throttled: boolean): CaseOutcomeData {
-  return { runId: null, actualOutcome, latencyMs: null, firstEventMs: null, qualityRetries: null, tokens: null, judge: null, nameCandidates: [], throttled };
+  return { runId: null, actualOutcome, latencyMs: null, firstEventMs: null, qualityRetries: null, tokens: null, judge: null, toneFit: null, nameCandidates: [], throttled };
 }
 
 function buildRow(evalRunId: string, evalCase: EvalCase, repeat: number, data: CaseOutcomeData): EvalResultRow {
   const relevance = data.judge?.relevance ?? null;
+  // D31: a follow-up skips naming entirely, so its "name" was produced by the case it inherits
+  // from. Scoring distinctiveness on it would count that one name twice across the fixture and
+  // pollute the metric M4's sensitivity proof depends on. Relevance still applies — the copy is
+  // genuinely about *this* case's idea.
+  const isFollowUp = evalCase.follow_up_to !== undefined;
   return {
     eval_run_id: evalRunId,
     case_id: evalCase.id,
@@ -203,9 +274,11 @@ function buildRow(evalRunId: string, evalCase: EvalCase, repeat: number, data: C
     output_tokens: data.tokens?.output ?? 0,
     thinking_tokens: data.tokens?.thinking ?? 0,
     relevance_score: relevance,
-    distinctiveness_score: data.judge?.distinctiveness ?? null,
-    name_uniqueness: nameUniqueness(data.nameCandidates),
+    distinctiveness_score: isFollowUp ? null : (data.judge?.distinctiveness ?? null),
+    name_uniqueness: isFollowUp ? null : nameUniqueness(data.nameCandidates),
     judge_reason: data.judge?.reason ?? null,
+    tone_fit_score: data.toneFit?.tone_fit ?? null,
+    tone_fit_reason: data.toneFit?.reason ?? null,
   };
 }
 

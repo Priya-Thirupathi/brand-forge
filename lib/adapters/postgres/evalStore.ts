@@ -53,9 +53,10 @@ export async function insertEvalResult(pool: Pool, row: EvalResultRow): Promise<
        eval_run_id, case_id, repeat, run_id, expected_outcome, actual_outcome, outcome_match,
        first_attempt_pass, quality_retries, throttled, latency_ms, first_event_ms,
        input_tokens, output_tokens, thinking_tokens,
-       relevance_score, distinctiveness_score, name_uniqueness, judge_reason
+       relevance_score, distinctiveness_score, name_uniqueness, judge_reason,
+       tone_fit_score, tone_fit_reason
      )
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
      on conflict (eval_run_id, case_id, repeat) do nothing`,
     [
       row.eval_run_id,
@@ -77,6 +78,8 @@ export async function insertEvalResult(pool: Pool, row: EvalResultRow): Promise<
       row.distinctiveness_score,
       row.name_uniqueness,
       row.judge_reason,
+      row.tone_fit_score,
+      row.tone_fit_reason,
     ],
   );
 }
@@ -98,7 +101,8 @@ export async function listEvalResults(pool: Pool, evalRunId: string): Promise<Ev
     `select eval_run_id, case_id, repeat, run_id, expected_outcome, actual_outcome, outcome_match,
             first_attempt_pass, quality_retries, throttled, latency_ms, first_event_ms,
             input_tokens, output_tokens, thinking_tokens,
-            relevance_score::float8, distinctiveness_score::float8, name_uniqueness::float8, judge_reason
+            relevance_score::float8, distinctiveness_score::float8, name_uniqueness::float8, judge_reason,
+            tone_fit_score::float8, tone_fit_reason
      from eval_results where eval_run_id = $1 order by case_id, repeat`,
     [evalRunId],
   );
@@ -127,11 +131,17 @@ interface EvalRunRow {
   models: EvalRunModels;
   repeats: number;
   is_baseline: boolean;
-  aggregate: EvalAggregate | null;
-  comparison: EvalComparison | null;
+  // Typed as the shape actually on disk, which for any run predating D31 has no tone-fit
+  // fields. Claiming `EvalAggregate` here would let the missing ones reach the client as
+  // `undefined` behind a type that promises otherwise; listStoredRuns fills them instead.
+  aggregate: StoredAggregate | null;
+  comparison: StoredComparison | null;
   created_at: Date;
   finished_at: Date | null;
 }
+
+type StoredAggregate = Omit<EvalAggregate, "mean_tone_fit"> & Partial<Pick<EvalAggregate, "mean_tone_fit">>;
+type StoredComparison = Omit<EvalComparison, "tone_fit"> & Partial<Pick<EvalComparison, "tone_fit">>;
 
 const EVAL_RUN_COLUMNS = `id, label, git_sha, target, fixture_version, prompt_versions, models, repeats, is_baseline, aggregate, comparison, created_at, finished_at`;
 
@@ -176,7 +186,30 @@ export async function listEvalRunSummaries(pool: Pool, params: { label?: string;
     is_baseline: row.is_baseline,
     repeats: row.repeats,
     completed_case_repeats: Number(row.completed_case_repeats),
-    aggregate: row.aggregate,
-    comparison: row.comparison,
+    // D31 added mean_tone_fit/comparison.tone_fit after runs had already been stored. Nothing
+    // Zod-parses this jsonb on the way out, so an aggregate written before then would otherwise
+    // reach the client missing a field the contract says is always present. Defaulting here —
+    // at the one boundary where stored shape becomes contract shape — keeps the type honest
+    // without rewriting historical rows, which would falsify what those runs actually measured.
+    aggregate: row.aggregate ? { ...row.aggregate, mean_tone_fit: row.aggregate.mean_tone_fit ?? null } : null,
+    comparison: row.comparison ? { ...row.comparison, tone_fit: row.comparison.tone_fit ?? null } : null,
   }));
+}
+
+// D31: which brand a consistency case should attach its follow-up to — the brand created by an
+// *earlier* case in this same eval run. Read from the database rather than kept only in memory
+// because `--resume` and D3's serverless chunking both mean the prerequisite case may have run
+// in a different process entirely. Ordered by repeat so a case with several successful repeats
+// resolves to the same brand every time, rather than whichever row the planner returned first.
+export async function findEvalCaseBrandId(pool: Pool, evalRunId: string, caseId: string): Promise<string | null> {
+  const { rows } = await pool.query<{ brand_id: string }>(
+    `select p.brand_id
+     from eval_results er
+     join products p on p.run_id = er.run_id
+     where er.eval_run_id = $1 and er.case_id = $2 and er.actual_outcome = 'pass'
+     order by er.repeat
+     limit 1`,
+    [evalRunId, caseId],
+  );
+  return rows[0]?.brand_id ?? null;
 }

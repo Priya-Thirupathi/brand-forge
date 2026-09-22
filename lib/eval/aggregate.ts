@@ -24,6 +24,7 @@ export function computeAggregate(results: readonly EvalResultRow[]): EvalAggrega
   const relevances = nonNull(results.map((r) => r.relevance_score));
   const distinctivenesses = nonNull(results.map((r) => r.distinctiveness_score));
   const uniquenesses = nonNull(results.map((r) => r.name_uniqueness));
+  const toneFits = nonNull(results.map((r) => r.tone_fit_score));
   const qualityRetries = nonNull(results.map((r) => r.quality_retries));
   const firstAttemptPasses = nonNull(results.map((r) => r.first_attempt_pass));
 
@@ -37,6 +38,9 @@ export function computeAggregate(results: readonly EvalResultRow[]): EvalAggrega
     mean_relevance: relevances.length > 0 ? mean(relevances) : null,
     mean_distinctiveness: distinctivenesses.length > 0 ? mean(distinctivenesses) : null,
     mean_name_uniqueness: uniquenesses.length > 0 ? mean(uniquenesses) : null,
+    // D31: null rather than 0 on a fixture with no consistency cases — "not measured" and
+    // "measured as terrible" have to stay distinguishable in the stored aggregate.
+    mean_tone_fit: toneFits.length > 0 ? mean(toneFits) : null,
     // Throttled runs are excluded from latency percentiles (TRD.md §9) — a pacing wait isn't
     // the app's own latency.
     latency_ms_p50: percentile(
@@ -94,11 +98,21 @@ export function compareEvalRuns(baselineEvalRunId: string, baselineResults: read
     return compareMetric(baselineValues, candidateValues, options);
   };
 
+  // Unlike `compare`, tolerates having nothing to pair: compareMetric throws on empty input by
+  // design, and comparing a D31-era candidate against an older baseline legitimately has no
+  // shared consistency cases to pair on.
+  const compareOptional = (metric: (row: EvalResultRow) => number | null, options: { minEffect: number }) => {
+    const { baselineValues, candidateValues } = pairedValues(perCaseMeans(baselineResults, metric), perCaseMeans(candidateResults, metric));
+    if (baselineValues.length === 0) return null;
+    return compareMetric(baselineValues, candidateValues, options);
+  };
+
   return {
     baseline_eval_run_id: baselineEvalRunId,
     relevance: compare((r) => r.relevance_score, { minEffect: 0.05 }),
     distinctiveness: compare((r) => r.distinctiveness_score, { minEffect: 0.05 }),
     outcome_match_rate: compare((r) => (r.outcome_match ? 1 : 0), { minEffect: 0.05 }),
     latency_ms: compare((r) => r.latency_ms, { minEffect: 0.1, relative: true }),
+    tone_fit: compareOptional((r) => r.tone_fit_score, { minEffect: 0.05 }),
   };
 }

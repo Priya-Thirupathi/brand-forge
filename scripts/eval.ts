@@ -72,10 +72,16 @@ async function runGenerate(argv: string[]) {
       onEvent: (event) => {
         if (event.type === "case_skipped") console.log(`  skip  ${event.caseId} #${event.repeat} (already recorded)`);
         if (event.type === "case_started") console.log(`  run   ${event.caseId} #${event.repeat}`);
+        // D31: says *why* a consistency case couldn't run, rather than leaving a bare error row
+        // in the results for someone to reverse-engineer later.
+        if (event.type === "case_unresolved") {
+          console.log(`  skip  ${event.caseId} #${event.repeat}: "${event.followUpTo}" produced no brand to follow up on`);
+        }
         if (event.type === "case_finished") {
           const row = event.row;
           const mark = row.outcome_match ? "ok" : "MISMATCH";
-          console.log(`  done  ${event.caseId} #${event.repeat}: expected ${row.expected_outcome}, got ${row.actual_outcome} [${mark}]`);
+          const tone = row.tone_fit_score === null ? "" : ` tone_fit=${row.tone_fit_score.toFixed(2)}`;
+          console.log(`  done  ${event.caseId} #${event.repeat}: expected ${row.expected_outcome}, got ${row.actual_outcome} [${mark}]${tone}`);
         }
       },
     });
@@ -83,7 +89,7 @@ async function runGenerate(argv: string[]) {
     const results = await listEvalResults(pool, evalRunId);
     const aggregate = computeAggregate(results);
     await finishEvalRun(pool, evalRunId, aggregate);
-    console.log(`Finished eval run ${evalRunId}: outcome_match_rate=${(aggregate.outcome_match_rate * 100).toFixed(1)}% mean_relevance=${aggregate.mean_relevance?.toFixed(2) ?? "n/a"}`);
+    console.log(`Finished eval run ${evalRunId}: outcome_match_rate=${(aggregate.outcome_match_rate * 100).toFixed(1)}% mean_relevance=${aggregate.mean_relevance?.toFixed(2) ?? "n/a"} mean_tone_fit=${aggregate.mean_tone_fit?.toFixed(2) ?? "n/a"}`);
 
     if (values["set-baseline"]) {
       await setBaseline(pool, evalRunId);

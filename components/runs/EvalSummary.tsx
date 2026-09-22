@@ -17,7 +17,10 @@ function formatScore(value: number | null): string {
 // calling out rather than burying in the raw delta numbers.
 function ComparisonBadges({ comparison }: { comparison: EvalRunSummary["comparison"] }) {
   if (!comparison) return null;
-  const flagged = Object.entries(comparison).filter(([key, value]) => key !== "baseline_eval_run_id" && typeof value === "object" && "flagged" in value && value.flagged);
+  // `tone_fit` is nullable (D31), so a null member has to be skipped before the `in` check.
+  const flagged = Object.entries(comparison).filter(
+    ([key, value]) => key !== "baseline_eval_run_id" && value !== null && typeof value === "object" && "flagged" in value && value.flagged,
+  );
   if (flagged.length === 0) {
     return <span className="text-xs text-muted">vs. baseline: no flagged changes</span>;
   }
@@ -71,6 +74,7 @@ export function EvalSummary({ refreshSignal }: { refreshSignal?: number }) {
             <th className="px-4 py-2.5 font-medium">Outcome match</th>
             <th className="px-4 py-2.5 font-medium">Relevance</th>
             <th className="px-4 py-2.5 font-medium">Distinctiveness</th>
+            <th className="px-4 py-2.5 font-medium">Tone fit</th>
             <th className="px-4 py-2.5 font-medium">Latency p50</th>
             <th className="px-4 py-2.5 font-medium">Comparison</th>
           </tr>
@@ -89,6 +93,8 @@ export function EvalSummary({ refreshSignal }: { refreshSignal?: number }) {
               <td className="px-4 py-2.5 font-mono text-[13px] tabular-nums">{formatPct(run.aggregate?.outcome_match_rate ?? null)}</td>
               <td className="px-4 py-2.5 font-mono text-[13px] tabular-nums">{formatScore(run.aggregate?.mean_relevance ?? null)}</td>
               <td className="px-4 py-2.5 font-mono text-[13px] tabular-nums">{formatScore(run.aggregate?.mean_distinctiveness ?? null)}</td>
+              {/* D31: "—" here means the run predates consistency cases, not that it scored zero. */}
+              <td className="px-4 py-2.5 font-mono text-[13px] tabular-nums">{formatScore(run.aggregate?.mean_tone_fit ?? null)}</td>
               <td className="px-4 py-2.5 font-mono text-[13px] tabular-nums">{run.aggregate?.latency_ms_p50 ? `${run.aggregate.latency_ms_p50}ms` : "—"}</td>
               <td className="px-4 py-2.5">
                 <ComparisonBadges comparison={run.comparison} />
