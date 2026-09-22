@@ -82,7 +82,7 @@ Secondary audience: a **reviewer** (hiring manager or engineer) evaluating the p
 2. ✅ Brand follow-ups with tone memory, plus consistency eval cases. [D10, D29, D31]
 3. ✅ Alternate-name regenerate. [D8, D30]
 4. ✅ Per-step routing experiment, strong vs. cheap model. [D12, D32] — mechanism and guard shipped; the experiment itself needs a provider with two genuinely different tiers (not Groq/Qwen today, D26).
-5. Judge calibration against 20 hand-labelled outputs.
+5. 🟡 Judge calibration against 20 hand-labelled outputs. [D33] — blind export/report shipped; awaiting the 20 human labels, which can't be generated.
 6. Exact-match response caching to save quota.
 
 ### 8. Success Metrics (demo-appropriate)

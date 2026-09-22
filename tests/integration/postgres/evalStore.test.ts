@@ -3,6 +3,7 @@ import {
   createEvalRun,
   evalRunExists,
   findEvalCaseBrandId,
+  listJudgedOutputs,
   finishEvalRun,
   getEvalRun,
   getLatestBaseline,
@@ -15,7 +16,7 @@ import {
   setEvalRunMeta,
 } from "@/lib/adapters/postgres/evalStore";
 import type { EvalAggregate, EvalComparison, EvalResultRow } from "@/lib/contracts/eval";
-import { resetDb, testPool } from "../setup/testDb";
+import { resetDb, seedCategory, testPool } from "../setup/testDb";
 
 beforeEach(resetDb);
 afterAll(async () => {
@@ -204,5 +205,38 @@ describe("findEvalCaseBrandId (D31)", () => {
     await insertEvalResult(testPool, resultRow(evalRunId, { case_id: "n10", actual_outcome: "reject", run_id: null }));
 
     expect(await findEvalCaseBrandId(testPool, evalRunId, "n10")).toBeNull();
+  });
+});
+
+describe("listJudgedOutputs (D33)", () => {
+  it("returns the copy a human needs to label, and only succeeded rows", async () => {
+    const seeded = await seedCategory();
+    const evalRunId = await createEvalRun(testPool, newEvalRun());
+    const { rows: runRows } = await testPool.query<{ id: string }>(
+      `insert into runs (source, idea, status, prompt_versions, client_ip_hash) values ('eval', 'idea', 'succeeded', '{}'::jsonb, 'h') returning id`,
+    );
+    const runId = runRows[0].id;
+    const { rows: brandRows } = await testPool.query<{ id: string }>(
+      `insert into brands (name, tone_notes, source) values ('Ridge', '{"voice":[],"audience":"a","personality":"p","avoid":[]}'::jsonb, 'eval') returning id`,
+    );
+    await testPool.query(
+      `insert into products (brand_id, run_id, category, feasibility_snapshot, idea, tagline, description, packaging, source)
+       values ($1, $2, $3, '{}'::jsonb, 'a lavender candle', 'Rest easy', 'A calming candle.', '{}'::jsonb, 'eval')`,
+      [brandRows[0].id, runId, seeded.category],
+    );
+    await insertEvalResult(testPool, resultRow(evalRunId, { case_id: "n01", run_id: runId, relevance_score: 0.9, distinctiveness_score: 0.4 }));
+    // A rejected case produced no copy, so there is nothing to put in front of a labeller.
+    await insertEvalResult(testPool, resultRow(evalRunId, { case_id: "n02", actual_outcome: "reject", run_id: null }));
+
+    const outputs = await listJudgedOutputs(testPool, evalRunId);
+    expect(outputs).toHaveLength(1);
+    expect(outputs[0]).toMatchObject({
+      case_id: "n01",
+      name: "Ridge",
+      tagline: "Rest easy",
+      idea: "a lavender candle",
+      relevance: 0.9,
+      distinctiveness: 0.4,
+    });
   });
 });

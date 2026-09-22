@@ -213,3 +213,33 @@ export async function findEvalCaseBrandId(pool: Pool, evalRunId: string, caseId:
   );
   return rows[0]?.brand_id ?? null;
 }
+
+export interface JudgedOutput {
+  case_id: string;
+  repeat: number;
+  category: string;
+  idea: string;
+  name: string;
+  tagline: string;
+  description: string;
+  relevance: number | null;
+  distinctiveness: number | null;
+}
+
+// D33: the succeeded outputs of one eval run, with the copy a human would need to label them.
+// eval_results stores only scores and a run_id, so the words themselves come back through
+// products/brands. Ordered deterministically so two exports of the same run produce the same
+// sheet, which matters when a labelling session is spread over more than one sitting.
+export async function listJudgedOutputs(pool: Pool, evalRunId: string): Promise<JudgedOutput[]> {
+  const { rows } = await pool.query<JudgedOutput>(
+    `select er.case_id, er.repeat, p.category, p.idea, b.name, p.tagline, p.description,
+            er.relevance_score::float8 as relevance, er.distinctiveness_score::float8 as distinctiveness
+     from eval_results er
+     join products p on p.run_id = er.run_id
+     join brands b on b.id = p.brand_id
+     where er.eval_run_id = $1 and er.actual_outcome = 'pass'
+     order by er.case_id, er.repeat`,
+    [evalRunId],
+  );
+  return rows;
+}

@@ -65,3 +65,45 @@ export function compareMetric(baselineByCase: readonly number[], candidateByCase
     flagged: ciExcludesZero && Math.abs(delta) >= threshold,
   };
 }
+
+// D33: Spearman rank correlation — Pearson applied to ranks. Used instead of raw Pearson
+// because judge and human scores are subjective ordinal judgements on a 0-1 scale, where "did
+// they order these outputs the same way" is a fairer question than "did they pick the same
+// numbers". Null when either side has no variation to rank (every value identical), which is a
+// real outcome on a small label set and not a zero correlation.
+export function spearman(a: readonly number[], b: readonly number[]): number | null {
+  if (a.length !== b.length || a.length < 2) return null;
+  const rankA = toRanks(a);
+  const rankB = toRanks(b);
+  const meanA = mean(rankA);
+  const meanB = mean(rankB);
+
+  let covariance = 0;
+  let varianceA = 0;
+  let varianceB = 0;
+  for (let i = 0; i < rankA.length; i++) {
+    const da = rankA[i] - meanA;
+    const db = rankB[i] - meanB;
+    covariance += da * db;
+    varianceA += da * da;
+    varianceB += db * db;
+  }
+  if (varianceA === 0 || varianceB === 0) return null;
+  return covariance / Math.sqrt(varianceA * varianceB);
+}
+
+// Average ranks for ties, so repeated scores (common when a judge leans on round numbers like
+// 0.8) don't get an arbitrary order imposed on them.
+function toRanks(values: readonly number[]): number[] {
+  const indexed = values.map((value, index) => ({ value, index })).sort((x, y) => x.value - y.value);
+  const ranks = new Array<number>(values.length);
+  let i = 0;
+  while (i < indexed.length) {
+    let j = i;
+    while (j + 1 < indexed.length && indexed[j + 1].value === indexed[i].value) j++;
+    const averageRank = (i + j) / 2 + 1;
+    for (let k = i; k <= j; k++) ranks[indexed[k].index] = averageRank;
+    i = j + 1;
+  }
+  return ranks;
+}

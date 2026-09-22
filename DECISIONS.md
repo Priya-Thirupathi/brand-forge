@@ -514,6 +514,32 @@ Naming is skipped through the same switch a resume and a follow-up already use �
 
 ---
 
+### D33 — Judge calibration is blind, and reports rank agreement over absolute agreement
+
+**Added 2026-09-23.** Stage 5 item 5.
+
+**Decision:** `npm run eval -- export-labels --run ID --out labels.json` writes a sheet of that run's succeeded outputs; a human fills in `human_relevance` and `human_distinctiveness`; `npm run eval -- calibrate --labels labels.json` joins the sheet back to the judge's stored scores and reports, per dimension: mean absolute error, signed bias, Spearman rank correlation, and agreement at the 0.5 cut. No new table — a calibration is a one-off audit of the judge, not a per-run metric, and storing it would imply otherwise.
+
+**Why the sheet carries no judge scores.** This is the whole design. Showing the judge's answer next to the box you are filling in anchors you to it, and the agreement number that comes out measures suggestibility rather than the judge. `calibrate` re-reads the scores from Postgres and joins on `case_id + repeat`, so the labeller never sees them.
+
+**Why rank correlation is the headline number.** PRD.md §9 lists judge bias as a known risk, and on Qwen the judge *is* the generator's own model (D26) — the exact conflict that risk names. But the harness only ever uses the judge to compare two runs against each other (D18, paired per case), and a uniform bias cancels out in a paired comparison. What does not cancel is the judge *ordering* outputs differently than a human would. So `bias` is reported and then explicitly deprioritised in the CLI's own output, rather than left to look like the important figure.
+
+**Why threshold agreement at 0.5 specifically:** it is not an arbitrary cut. `outcomeMatches` treats a `safe` case as matching when the judge scored relevance ≥ 0.5, so 0.5 is the only place a judge disagreement changes what the harness reports.
+
+**Why a blank label is dropped, not read as zero:** a skipped row means "I didn't judge this", and averaging a 0 in would make a perfectly calibrated judge look badly miscalibrated because someone left a row alone. The dimension reports `labelled` alongside every figure so a thin sheet is visible rather than implied.
+
+**Why `selectForLabelling` covers every case before taking a second repeat:** the natural implementation — first 20 rows — returns three repeats each of the first seven cases, measuring the judge on a fraction of the fixture's difficulty range and calling it a calibration.
+
+**This one is not finished until a human labels the sheet.** The mechanism and the report are code; the 20 labels are not, and cannot be generated — labelling with the same model family the judge belongs to would produce agreement by construction and measure nothing at all.
+
+**Rejected:**
+- *Showing judge scores in the sheet for convenience* — destroys the measurement.
+- *Storing calibration in a table / on `eval_runs`* — implies it varies per run; it is a property of the judge and rubric.
+- *Pearson correlation on raw scores* — these are subjective ordinal judgements, and one labeller's compressed 0.6-0.9 range would read as poor agreement even with a perfectly ordered judge.
+- *Auto-labelling with a second model* — the obvious shortcut, and it measures two models' shared priors, not human agreement.
+
+---
+
 ## Open items — need a human
 1. **Quota numbers.** Read the project's requests-per-minute and requests-per-day for both models on the AI Studio rate-limit page, then set `GLOBAL_DAILY_GENERATION_CAP` ≤ RPD ÷ 6 (worst case: 3 steps × 2 attempts).
 2. **Feasibility numbers.** Seed values are labelled illustrative but need a plausibility pass.

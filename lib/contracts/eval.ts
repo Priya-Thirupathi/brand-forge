@@ -157,6 +157,57 @@ export const EvalComparisonSchema = z.object({
 });
 export type EvalComparison = z.infer<typeof EvalComparisonSchema>;
 
+// D33: the hand-labelling sheet for judge calibration. Written by `eval export-labels`, filled
+// in by a human, read back by `eval calibrate`. Deliberately carries NO judge scores — showing
+// them while labelling would anchor the labeller to the very thing being audited, and the
+// resulting agreement number would measure suggestibility rather than the judge. `calibrate`
+// re-reads the judge's scores from Postgres and joins on case_id + repeat.
+export const LabelSheetItemSchema = z.object({
+  case_id: z.string(),
+  repeat: z.number().int().min(1),
+  category: z.string(),
+  idea: z.string(),
+  name: z.string(),
+  tagline: z.string(),
+  description: z.string(),
+  // Null until a human fills them in. Same 0-1 scale and meaning as the judge's rubric.
+  human_relevance: z.number().min(0).max(1).nullable(),
+  human_distinctiveness: z.number().min(0).max(1).nullable(),
+});
+export type LabelSheetItem = z.infer<typeof LabelSheetItemSchema>;
+
+export const LabelSheetSchema = z.object({
+  eval_run_id: z.string(),
+  // Recorded so a sheet can't be silently used to calibrate a different judge than the one that
+  // produced the scores it will be compared against.
+  judge_model: z.string(),
+  items: z.array(LabelSheetItemSchema),
+});
+export type LabelSheet = z.infer<typeof LabelSheetSchema>;
+
+export const CalibrationDimensionSchema = z.object({
+  labelled: z.number().int(),
+  // Mean |human - judge|: typical disagreement size, in score units.
+  mean_absolute_error: z.number(),
+  // Mean (judge - human): positive means the judge is systematically more generous.
+  bias: z.number(),
+  // Spearman rank correlation — whether the judge *orders* outputs like a human does, which is
+  // what matters for comparing two eval runs, independent of absolute calibration.
+  rank_correlation: z.number().nullable(),
+  // Agreement at the 0.5 cut, the only threshold with operational meaning: outcomeMatches uses
+  // `relevance >= 0.5` to decide whether a "safe" case passed.
+  threshold_agreement: z.number(),
+});
+export type CalibrationDimension = z.infer<typeof CalibrationDimensionSchema>;
+
+export const CalibrationReportSchema = z.object({
+  eval_run_id: z.string(),
+  judge_model: z.string(),
+  relevance: CalibrationDimensionSchema,
+  distinctiveness: CalibrationDimensionSchema,
+});
+export type CalibrationReport = z.infer<typeof CalibrationReportSchema>;
+
 // GET /api/eval/summary response row (TRD.md §8) — never eval_results detail.
 export const EvalRunSummarySchema = z.object({
   id: z.string(),

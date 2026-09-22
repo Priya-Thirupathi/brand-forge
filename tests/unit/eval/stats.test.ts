@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bootstrapCI, compareMetric, mean } from "@/lib/eval/stats";
+import { bootstrapCI, compareMetric, mean, spearman } from "@/lib/eval/stats";
 
 describe("mean", () => {
   it("averages a list of numbers", () => {
@@ -60,5 +60,24 @@ describe("compareMetric", () => {
     const candidate = new Array(20).fill(1050); // +5%, under a 10% relative threshold
     const delta = compareMetric(baseline, candidate, { minEffect: 0.1, relative: true });
     expect(delta.flagged).toBe(false);
+  });
+});
+
+describe("spearman (D33)", () => {
+  it("is 1 for identical ordering and -1 for reversed, regardless of scale", () => {
+    expect(spearman([0.1, 0.2, 0.3], [0.5, 0.7, 0.9])).toBeCloseTo(1);
+    expect(spearman([0.1, 0.2, 0.3], [0.9, 0.7, 0.5])).toBeCloseTo(-1);
+  });
+
+  it("averages tied ranks rather than imposing an arbitrary order", () => {
+    // A judge that leans on round numbers produces ties constantly; breaking them by index
+    // would invent agreement or disagreement that isn't in the data.
+    expect(spearman([1, 1, 2], [1, 1, 2])).toBeCloseTo(1);
+  });
+
+  it("returns null when there is nothing to rank", () => {
+    expect(spearman([0.5, 0.5, 0.5], [0.1, 0.2, 0.3])).toBeNull();
+    expect(spearman([0.5], [0.5])).toBeNull();
+    expect(spearman([0.1, 0.2], [0.1])).toBeNull();
   });
 });
