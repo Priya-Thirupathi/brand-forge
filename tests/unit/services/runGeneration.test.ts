@@ -11,6 +11,7 @@ import type {
   TransportFailureReason,
 } from "@/lib/services/ports";
 import type { CategoryFacts, FeasibilityOptionFacts } from "@/lib/domain/types";
+import { evaluateCandidates } from "@/lib/domain/guardrails/nameRules";
 
 // Fixtures reused from tests/unit/domain/agents.test.ts, already proven to pass each agent's
 // evaluate() — reusing them keeps this file about orchestration, not about crafting copy that
@@ -94,7 +95,7 @@ function createScriptedLlmClient(responses: LlmOutcome[]): { client: LlmClient; 
   return { client, systemPrompts };
 }
 
-function createInMemoryStore(): { store: GenerationStore; finishedRuns: Map<string, FinishedRun> } {
+function createInMemoryStore(): { store: GenerationStore; startedRuns: Map<string, NewRun>; finishedRuns: Map<string, FinishedRun> } {
   let counter = 0;
   const startedRuns = new Map<string, NewRun>();
   const finishedRuns = new Map<string, FinishedRun>();
@@ -115,7 +116,7 @@ function createInMemoryStore(): { store: GenerationStore; finishedRuns: Map<stri
       return record.status === "succeeded" ? { brandId: "brand-1", productId: "product-1" } : undefined;
     },
   };
-  return { store, finishedRuns };
+  return { store, startedRuns, finishedRuns };
 }
 
 function createSteppedClock(values: number[]): Clock {
@@ -446,6 +447,69 @@ describe("runGeneration", () => {
     if (result.outcome.status === "rejected") {
       expect(result.outcome.failure.step).toBe("tagline_description");
     }
+  });
+
+  it("regenerate (D30): skips naming, pins the alternate candidate, and carries the whole set through", async () => {
+    const barklineTaglineJson = { ...validTaglineJson, description: validTaglineJson.description.replace(/Wagwell/g, "Barkline") };
+    const barklinePackagingJson = {
+      ...validPackagingJson,
+      headline: validPackagingJson.headline.replace("Wagwell", "Barkline"),
+      body: validPackagingJson.body.replace(/Wagwell/g, "Barkline"),
+    };
+    const { client, systemPrompts } = createScriptedLlmClient([okOutcome(barklineTaglineJson), okOutcome(barklinePackagingJson)]);
+    const { store, startedRuns, finishedRuns } = createInMemoryStore();
+    const candidates = evaluateCandidates(validNamingJson.candidates, category);
+
+    const result = await runGeneration(
+      baseInput({ regenerate: { fromRunId: "run-origin", naming: { candidates, selectedName: "Barkline" } } }),
+      { llmClient: client, store },
+    );
+
+    expect(result.outcome.status).toBe("succeeded");
+    if (result.outcome.status === "succeeded") {
+      expect(result.outcome.brandName).toBe("Barkline");
+      // The same passing names still show, with the alternate now marked selected. "Pet Treats"
+      // stays filtered out — it never passed the category rule, so it was never on offer.
+      expect(result.outcome.nameCandidates).toEqual([
+        { name: "Wagwell", selected: false },
+        { name: "Barkline", selected: true },
+      ]);
+      // A regenerate writes a fresh tone around the new name — deliberately the opposite of a
+      // D29 follow-up, which carries the existing brand's tone over unchanged.
+      expect(result.outcome.toneNotes).toEqual(barklineTaglineJson.tone_notes);
+    }
+    expect(systemPrompts).toHaveLength(2); // tagline_description + packaging only, no naming call
+    expect(Object.keys(result.meta.promptVersions)).toEqual(["tagline_description", "packaging"]);
+    expect(startedRuns.get(result.runId)?.regeneratedFromRunId).toBe("run-origin");
+    expect(startedRuns.get(result.runId)?.resumedFromRunId).toBeUndefined();
+
+    const finished = finishedRuns.get(result.runId);
+    // The origin's full set — failed candidates included — is stored on this run too, which is
+    // what lets a *second* regenerate read its candidates back off this run rather than 404ing.
+    expect(finished?.nameCandidates?.map((c) => c.name)).toEqual(["Wagwell", "Barkline", "Pet Treats"]);
+    if (finished?.status === "succeeded") {
+      // A different name means a different brand: nothing is attached to the origin's brand row.
+      expect(finished.content.existingBrandId).toBeUndefined();
+    }
+  });
+
+  it("regenerate (D30): a resume in the same request still wins, so the client must not send both", async () => {
+    // Not a supported combination — useGeneration clears resume_from_run_id when regenerating.
+    // Pinned as a test because the precedence is silent: the user would get the original name
+    // back with no error, which is why the hook clears it rather than relying on the server.
+    const { client } = createScriptedLlmClient([okOutcome(validTaglineJson), okOutcome(validPackagingJson)]);
+    const { store } = createInMemoryStore();
+    const candidates = evaluateCandidates(validNamingJson.candidates, category);
+
+    const result = await runGeneration(
+      baseInput({
+        resume: { naming: { candidates, selectedName: "Wagwell" } },
+        regenerate: { fromRunId: "run-origin", naming: { candidates, selectedName: "Barkline" } },
+      }),
+      { llmClient: client, store },
+    );
+
+    expect(result.outcome.status === "succeeded" && result.outcome.brandName).toBe("Wagwell");
   });
 
   it("passes the caller's abort signal through to the LLM client on every call", async () => {

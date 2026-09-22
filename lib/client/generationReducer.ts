@@ -5,12 +5,13 @@ export type StepState = "pending" | "in_progress" | "passed" | "retrying" | "fai
 
 const STEP_NAMES: StepName[] = ["naming", "tagline_description", "packaging"];
 
-// `resumedSteps` are steps a resume request is skipping (already accepted by a prior run) —
-// they start "passed" instead of "pending" since no `step_started`/`step_finished` event will
-// ever arrive for a step the server never re-attempts.
-function initialSteps(resumedSteps: StepName[] = []): Record<StepName, StepState> {
+// Steps the server won't attempt at all: a resume reusing a prior run's already-accepted
+// output, or a regenerate (D30) pinning naming to a name that run already produced. They start
+// "passed" instead of "pending" since no `step_started`/`step_finished` event will ever arrive
+// for a step the server never runs.
+function initialSteps(skippedSteps: StepName[] = []): Record<StepName, StepState> {
   const steps: Record<StepName, StepState> = { naming: "pending", tagline_description: "pending", packaging: "pending" };
-  for (const step of resumedSteps) steps[step] = "passed";
+  for (const step of skippedSteps) steps[step] = "passed";
   return steps;
 }
 
@@ -38,7 +39,7 @@ export type GenerationState =
 export const initialGenerationState: GenerationState = { status: "idle" };
 
 export type GenerationAction =
-  | { type: "submit"; resumedSteps?: StepName[]; isReplay?: boolean }
+  | { type: "submit"; skippedSteps?: StepName[]; isReplay?: boolean }
   | ({ type: "admission_error" } & AdmissionError)
   | { type: "stream_event"; event: GenerateEvent }
   // The stream ended (network drop, parse failure) without ever sending a `result`/`error`
@@ -50,7 +51,7 @@ export type GenerationAction =
 export function generationReducer(state: GenerationState, action: GenerationAction): GenerationState {
   switch (action.type) {
     case "submit":
-      return { status: "running", steps: initialSteps(action.resumedSteps), isReplay: action.isReplay };
+      return { status: "running", steps: initialSteps(action.skippedSteps), isReplay: action.isReplay };
     case "admission_error":
       return { status: "admission_error", httpStatus: action.httpStatus, error: action.error, message: action.message, retryAfterS: action.retryAfterS };
     case "reset":

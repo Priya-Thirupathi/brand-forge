@@ -60,6 +60,13 @@ export interface RunGenerationInput {
   // Never set together with `resume` in practice (different flows never reachable at once from
   // the UI), but nothing here enforces that — both would simply skip naming redundantly.
   followUpBrand?: { id: string; name: string; toneNotes: ToneNotes };
+  // Stage 5, item 3 (D30): the user picked one of an earlier run's other name candidates, so
+  // naming is skipped and the rest of the copy is generated around that name — a fresh brand
+  // with a fresh tone, deliberately the opposite of `followUpBrand`. The origin run id and the
+  // accepted naming value are one field rather than the pair `resume` uses, because unlike a
+  // resume there is no meaningful half-state: lib/adapters/postgres/regenerate.ts either
+  // validated the name against that run's candidates or the request was refused outright.
+  regenerate?: { fromRunId: string; naming: NamingAccepted };
   // Present only on `source: "eval"` runs — see NewRun.evalRunId.
   evalRunId?: string;
   // Stage 2 sensitivity proof (TRD.md §9): swaps in an alternate naming prompt for this run
@@ -124,6 +131,7 @@ export async function runGeneration(
     feasibilityOptionId: input.feasibilityOptionId,
     clientIpHash: input.clientIpHash,
     resumedFromRunId: input.resumedFromRunId,
+    regeneratedFromRunId: input.regenerate?.fromRunId,
     evalRunId: input.evalRunId,
   });
   options.onEvent?.({ type: "run_started", runId });
@@ -151,11 +159,10 @@ export async function runGeneration(
   });
 
   const effectiveNamingAgent = input.namingAgentOverride ?? namingAgent;
-  const naming = input.resume?.naming
-    ? { kind: "accepted" as const, accepted: input.resume.naming, records: [] }
-    : input.followUpBrand
-      ? { kind: "accepted" as const, accepted: { candidates: [], selectedName: input.followUpBrand.name }, records: [] }
-      : await runAgentStep(effectiveNamingAgent, { idea: input.idea, category: input.category, option: input.option }, stepCtx("naming"));
+  const preset = presetNaming(input);
+  const naming = preset
+    ? { kind: "accepted" as const, accepted: preset, records: [] }
+    : await runAgentStep(effectiveNamingAgent, { idea: input.idea, category: input.category, option: input.option }, stepCtx("naming"));
   records.push(...naming.records);
   qualityRetries += extraAttempts(naming.records);
   // Only recorded once the step actually made at least one call — a deadline pre-check can
@@ -279,6 +286,19 @@ export async function runGeneration(
       usage: sumUsage(records),
     },
   };
+}
+
+// Three flows reach naming with the step already settled — a resume replaying an errored run's
+// accepted output, a regenerate pinning one of an earlier run's other candidates (D30), and a
+// brand follow-up reusing an existing brand's name (D29). They differ only in where the
+// accepted value comes from; to everything downstream they mean the same thing, which is no
+// LLM call and no `run_steps` row for this step.
+function presetNaming(input: RunGenerationInput): NamingAccepted | undefined {
+  if (input.resume?.naming) return input.resume.naming;
+  if (input.regenerate) return input.regenerate.naming;
+  // No candidates: a follow-up never had a naming step of its own to show alternatives from.
+  if (input.followUpBrand) return { candidates: [], selectedName: input.followUpBrand.name };
+  return undefined;
 }
 
 // --- generic per-step execution --------------------------------------------------------

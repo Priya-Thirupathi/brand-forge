@@ -438,6 +438,33 @@ Entry point: a "Add another product to this brand" link on every Gallery card (`
 
 ---
 
+### D30 — Alternate-name regenerate: the name is re-derived, never accepted as text
+
+**Added 2026-09-23.**
+
+**Decision:** Clicking one of the name candidates that wasn't selected regenerates `tagline_description` and `packaging` around it, leaving naming un-called — `POST /api/generate` gains a paired `regenerate_from_run_id` + `alternate_name` (both or neither, enforced in `GenerateRequestSchema`). The result is a new run, a new brand and a new product; the original stays exactly as it was, so the Gallery shows both (asked and confirmed explicitly). Two LLM calls instead of three.
+
+`alternate_name` arrives as a string but is never used as one. `lib/adapters/postgres/regenerate.ts`'s `loadAlternateNaming` reads the origin run's own `runs.name_candidates`, re-runs the current per-candidate name rules over them (`evaluateCandidates`), and requires the requested name to be one that passes *now* — the stored `passed` flag is deliberately ignored, so a candidate that cleared an older version of the rules doesn't get a free ride into a new brand today. Anything else is a 400. This is what keeps D8's rejected "accept a free-text name on regenerate" path closed: the only reachable names are ones the guardrails just re-approved.
+
+Naming is skipped through the same switch a resume and a follow-up already use — `presetNaming` in `lib/services/runGeneration.ts` now names that shared idea instead of a three-armed ternary. The full candidate set (failures included) is carried onto the new run, which costs nothing and buys two things: `buildSucceededOutcome` already derives `selected` by comparing each candidate to the brand name, so the regenerated result shows the same names with the new one marked and no display code changed at all; and the new run carries candidates of its own, so a *second* regenerate works off it.
+
+**Why read `runs.name_candidates` rather than the naming step's `run_steps.raw_output`:** reconstructing through the agent's `evaluate()` is how `resume.ts` rebuilds accepted steps, and it was the first design here too. It breaks on the second hop. A regenerated run skips naming, so it has no naming `run_steps` row — picking a third name off a regenerated result would 400, and "you can regenerate exactly once" is a limit with no defensible reason behind it. The run row carries the set forward regardless of which step produced it. Verified live: a three-deep chain (ChalkProof → Summit Crumb → Date Drought) off one idea.
+
+**Why a fresh tone, not the origin's:** this is the deliberate mirror of D29. A follow-up is the *same* brand selling something else, so its voice must not move; a regenerate is a *different* brand, so carrying the old name's tone over would be actively wrong. Nothing is reused but the candidate list.
+
+**Why `regenerated_from_run_id` is its own column** (`0005_regenerated_from_run_id.sql`, additive, no backfill): a resume retries a run that **errored**, a regenerate forks one that **succeeded**. Folding them into `resumed_from_run_id` would make the Runs tab — whose entire job is showing what really happened — report every regenerate as a failure retry.
+
+**Why the client clears `resume_from_run_id` when regenerating,** rather than leaving it to the server: the flows have a silent precedence. `presetNaming` checks `resume.naming` first, so a request carrying both would replay the older run's accepted naming and hand back **the original name with no error at all** — the user clicks "Summit Crumb" and gets "ChalkProof". This is reachable in one step (generate → error → resume → succeed → click an alternate, since `useGeneration` reuses the last request), so `regenerate()` clears it explicitly and a unit test pins the precedence so the reason survives.
+
+**Rejected:**
+- *Accept a free-text name* — D8 already rejected this; an unvalidated name routed straight into the copy agents is a guardrail bypass wearing a convenience feature's clothes.
+- *Trust the stored `passed` flag* — cheaper by one function call, and wrong the moment the name rules change; the flag records what was true at generation time, not what is acceptable now.
+- *Hide the original brand on regenerate* — considered and declined: it needs writes to already-persisted rows and there's no un-hide path in the UI, so a misclick is unrecoverable. Two cards is the honest record of what was actually generated.
+- *Regenerate in place, updating the original brand's name* — destroys the run's own history, which is the one thing the Runs tab exists to show.
+- *Offering it on a replayed run (D28)* — a recorded run is shown precisely because the quota is gone, so the button could only ever 429.
+
+---
+
 ## Open items — need a human
 1. **Quota numbers.** Read the project's requests-per-minute and requests-per-day for both models on the AI Studio rate-limit page, then set `GLOBAL_DAILY_GENERATION_CAP` ≤ RPD ÷ 6 (worst case: 3 steps × 2 attempts).
 2. **Feasibility numbers.** Seed values are labelled illustrative but need a plausibility pass.

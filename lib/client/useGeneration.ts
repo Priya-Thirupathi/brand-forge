@@ -15,10 +15,10 @@ export function useGeneration() {
   // having to hold onto it — only ever read back inside this hook.
   const lastRequestRef = useRef<GenerateRequest | null>(null);
 
-  // Shared by every way of starting a stream (a fresh submit, a resume, or a replay) — they
-  // all consume the same NDJSON event contract (lib/contracts/generate.ts), so only how the
-  // fetch is made differs between them.
-  const runStream = useCallback(async (submitExtra: { resumedSteps?: StepName[]; isReplay?: boolean }, doFetch: (signal: AbortSignal) => Promise<Response>) => {
+  // Shared by every way of starting a stream (a fresh submit, a resume, a regenerate, or a
+  // replay) — they all consume the same NDJSON event contract (lib/contracts/generate.ts), so
+  // only how the fetch is made differs between them.
+  const runStream = useCallback(async (submitExtra: { skippedSteps?: StepName[]; isReplay?: boolean }, doFetch: (signal: AbortSignal) => Promise<Response>) => {
     controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
@@ -43,9 +43,9 @@ export function useGeneration() {
   }, []);
 
   const submit = useCallback(
-    (request: GenerateRequest, resumedSteps?: StepName[]) => {
+    (request: GenerateRequest, skippedSteps?: StepName[]) => {
       lastRequestRef.current = request;
-      return runStream({ resumedSteps }, (signal) =>
+      return runStream({ skippedSteps }, (signal) =>
         fetch("/api/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
@@ -77,8 +77,33 @@ export function useGeneration() {
     (runId: string, failedStep: StepName) => {
       const lastRequest = lastRequestRef.current;
       if (!lastRequest) return;
-      const resumedSteps = STEP_NAMES.slice(0, STEP_NAMES.indexOf(failedStep));
-      return submit({ ...lastRequest, resume_from_run_id: runId }, resumedSteps);
+      const skippedSteps = STEP_NAMES.slice(0, STEP_NAMES.indexOf(failedStep));
+      return submit({ ...lastRequest, resume_from_run_id: runId }, skippedSteps);
+    },
+    [submit],
+  );
+
+  // Stage 5, item 3 (D30): re-runs tagline/description and packaging around a different name
+  // the origin run already produced, so only naming is skipped. The other two flows' ids are
+  // cleared rather than inherited from the last request, and neither is cosmetic:
+  // `resume_from_run_id` would make the server replay an older run's accepted naming, which
+  // takes precedence over a regenerate and would hand back the *original* name instead of the
+  // one just clicked; `follow_up_brand_id` would attach the product to a brand this run has
+  // deliberately just renamed away from.
+  const regenerate = useCallback(
+    (runId: string, alternateName: string) => {
+      const lastRequest = lastRequestRef.current;
+      if (!lastRequest) return;
+      return submit(
+        {
+          ...lastRequest,
+          resume_from_run_id: undefined,
+          follow_up_brand_id: undefined,
+          regenerate_from_run_id: runId,
+          alternate_name: alternateName,
+        },
+        ["naming"],
+      );
     },
     [submit],
   );
@@ -88,5 +113,5 @@ export function useGeneration() {
     dispatch({ type: "reset" });
   }, []);
 
-  return { state, generate, resume, watchReplay, reset };
+  return { state, generate, resume, regenerate, watchReplay, reset };
 }

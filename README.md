@@ -110,6 +110,22 @@ admission checks). It's always labeled as a recorded run, never presented as liv
 fixed the same way a bad gallery entry is: hide it (see Moderation, below) and the picker moves
 to the next one.
 
+## Alternate-name regenerate (Stage 5)
+
+The naming step returns three candidates and picks the first that passes every name rule. The
+others aren't decoration — a result card lists them under **"Rebuild around"**, and clicking one
+regenerates the tagline, description and packaging around that name instead. Naming isn't called
+again, so it costs two model calls rather than three.
+
+The name is never taken at face value. The server re-reads that run's own candidates and re-checks
+the one you picked against the current per-candidate name rules before using it, so the only names
+that work are ones the guardrails have just re-approved — a hand-written `alternate_name` is a 400,
+not a shortcut past them.
+
+Each pick is a new brand, a new product and a new run; nothing overwrites what came before, so the
+Gallery shows all of them and `runs.regenerated_from_run_id` records where each one branched from.
+Regenerates chain — you can pick a third name off a result that was itself regenerated.
+
 ## Moderation
 
 There's no admin UI for removing a generation from the public gallery. Hide one manually:

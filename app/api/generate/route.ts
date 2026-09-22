@@ -16,6 +16,7 @@ import { createLlmClient } from "@/lib/adapters/createLlmClient";
 import { findCategory } from "@/lib/adapters/postgres/catalog";
 import { loadResumableAccepted } from "@/lib/adapters/postgres/resume";
 import { loadFollowUpBrand } from "@/lib/adapters/postgres/brand";
+import { loadAlternateNaming } from "@/lib/adapters/postgres/regenerate";
 import { hashIp } from "@/lib/adapters/postgres/ipHash";
 import { getClientIp } from "@/lib/adapters/clientIp";
 import { errorResponse, validationErrorResponse } from "../_shared/response";
@@ -92,6 +93,8 @@ export async function POST(request: NextRequest) {
     feasibility_option_id: feasibilityOptionId,
     resume_from_run_id: resumeFromRunId,
     follow_up_brand_id: followUpBrandId,
+    regenerate_from_run_id: regenerateFromRunId,
+    alternate_name: alternateName,
   } = parsed.data;
 
   const category = await findCategory(pool, categorySlug);
@@ -106,11 +109,26 @@ export async function POST(request: NextRequest) {
       400,
     );
   }
+  const optionFacts = toFeasibilityOptionFacts(option);
   // D29: a follow-up's brand must exist and be visible (moderation's `hidden` flag, same rule
   // the gallery applies) before anything else about the request is admitted.
   const followUpBrand = followUpBrandId ? ((await loadFollowUpBrand(pool, followUpBrandId)) ?? undefined) : undefined;
   if (followUpBrandId && !followUpBrand) {
     return errorResponse("invalid_input", `Unknown follow_up_brand_id "${followUpBrandId}".`, 400);
+  }
+
+  // D30: the alternate name has to be one the origin run's naming step actually produced and
+  // that passed the name rules, re-derived server-side. A bad one is refused outright rather
+  // than falling back to a fresh run the way an unusable resume does — see regenerate.ts.
+  let regenerate: { fromRunId: string; naming: NamingAccepted } | undefined;
+  if (regenerateFromRunId && alternateName) {
+    const alternate = await loadAlternateNaming(pool, regenerateFromRunId, alternateName, category);
+    if (!alternate.ok) {
+      return alternate.reason === "unknown_run"
+        ? errorResponse("invalid_input", `Run "${regenerateFromRunId}" has no name candidates to regenerate from.`, 400)
+        : errorResponse("invalid_input", `"${alternateName}" is not one of that run's name candidates.`, 400);
+    }
+    regenerate = { fromRunId: regenerateFromRunId, naming: alternate.naming };
   }
 
   // TRD.md §10: requests with no identifiable IP share one bucket, rather than each bypassing
@@ -143,7 +161,6 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const optionFacts = toFeasibilityOptionFacts(option);
   // A resume request replays the target run's already-accepted steps (lib/adapters/postgres/
   // resume.ts) against *this* request's idea/category/option, not ones re-read from the old
   // run row — they're expected to be identical since the client resubmits the same form.
@@ -161,6 +178,7 @@ export async function POST(request: NextRequest) {
     resumedFromRunId: resumeFromRunId,
     resume,
     followUpBrand,
+    regenerate,
     evalRunId,
     namingAgentOverride,
   };

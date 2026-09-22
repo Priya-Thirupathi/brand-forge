@@ -24,7 +24,7 @@ interface GenerateTabProps {
 }
 
 export function GenerateTab({ followUpTarget, onClearFollowUpTarget }: GenerateTabProps) {
-  const { state, generate, resume, watchReplay, reset } = useGeneration();
+  const { state, generate, resume, regenerate, watchReplay, reset } = useGeneration();
   const running = state.status === "running";
   const resumable = state.status === "run_error" && state.step !== "naming";
   // Stage 5, item 1: offered specifically when the *quota* is the problem — not a per-IP
@@ -47,7 +47,14 @@ export function GenerateTab({ followUpTarget, onClearFollowUpTarget }: GenerateT
         <div className="flex flex-col gap-4">
           {state.isReplay && <Badge variant="info">Recorded run, replayed with its original timing — not a live generation</Badge>}
           <FeasibilityCard feasibility={state.result.feasibility} />
-          {state.status === "succeeded" && <ResultCard result={state.result} />}
+          {state.status === "succeeded" && (
+            <ResultCard
+              result={state.result}
+              // D30: not offered on a replay — a recorded run is shown precisely because the
+              // quota is gone, so a regenerate button there would only ever 429.
+              onRegenerate={state.isReplay ? undefined : (name) => regenerate(state.result.run_id, name)}
+            />
+          )}
           {state.status === "rejected" && <RejectionNotice result={state.result} />}
           <GuardrailPanel result={state.result} />
           <button type="button" onClick={reset} className="self-start text-sm font-medium text-accent underline underline-offset-4 hover:opacity-80">

@@ -1,9 +1,17 @@
 import type { GenerateResult } from "@/lib/contracts/generate";
 import { Badge } from "@/components/ui/Badge";
 
+interface ResultCardProps {
+  result: GenerateResult;
+  // Stage 5, item 3 (D30): picking one of the names that wasn't selected regenerates the copy
+  // around it. Omitted where a regenerate can't or shouldn't be offered — notably a replayed
+  // recorded run, where the point is that there's no quota left to spend on a real one.
+  onRegenerate?: (alternateName: string) => void;
+}
+
 // Only meaningful for a succeeded result — brand/product/name_candidates are all optional in
 // GenerateResultSchema because a rejected/errored run never reaches naming's persisted output.
-export function ResultCard({ result }: { result: GenerateResult }) {
+export function ResultCard({ result, onRegenerate }: ResultCardProps) {
   if (!result.brand || !result.product) return null;
   const { brand, product, name_candidates: nameCandidates } = result;
 
@@ -16,14 +24,26 @@ export function ResultCard({ result }: { result: GenerateResult }) {
 
       {nameCandidates && nameCandidates.length > 1 && (
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="font-medium text-muted">Also considered</span>
+          <span className="font-medium text-muted">{onRegenerate ? "Rebuild around" : "Also considered"}</span>
           {nameCandidates
             .filter((c) => !c.selected)
-            .map((c) => (
-              <Badge key={c.name} variant="neutral">
-                {c.name}
-              </Badge>
-            ))}
+            .map((c) =>
+              onRegenerate ? (
+                <button
+                  key={c.name}
+                  type="button"
+                  onClick={() => onRegenerate(c.name)}
+                  title={`Rewrite the tagline, description and packaging around "${c.name}"`}
+                  className="rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  <Badge variant="accent">{c.name}</Badge>
+                </button>
+              ) : (
+                <Badge key={c.name} variant="neutral">
+                  {c.name}
+                </Badge>
+              ),
+            )}
         </div>
       )}
 

@@ -40,6 +40,16 @@ describe("generationReducer", () => {
     });
   });
 
+  it("starts skipped steps as passed, since no event will ever arrive for them", () => {
+    // What a D30 regenerate sends: naming is pinned server-side to an alternate candidate, so
+    // the step never runs and StepProgress would otherwise sit on "pending" forever.
+    const state = generationReducer(initialGenerationState, { type: "submit", skippedSteps: ["naming"] });
+    expect(state).toEqual({
+      status: "running",
+      steps: { naming: "passed", tagline_description: "pending", packaging: "pending" },
+    });
+  });
+
   it("tracks run_started, step_started, and step_finished events in order", () => {
     let state: GenerationState = generationReducer(initialGenerationState, { type: "submit" });
     state = generationReducer(state, { type: "stream_event", event: { type: "run_started", run_id: "run-1" } });

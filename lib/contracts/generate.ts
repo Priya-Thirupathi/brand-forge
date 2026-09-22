@@ -17,7 +17,20 @@ export const GenerateRequestSchema = z.object({
   // skipped and tone_notes carry over unchanged. Never set together with resume_from_run_id in
   // practice (different flows).
   follow_up_brand_id: z.string().uuid().optional(),
-});
+  // Stage 5, item 3 (D30): regenerate the copy around a different name the naming step already
+  // produced. `alternate_name` is never trusted as text — the route re-derives that run's
+  // candidate set from its stored naming output and requires this to be one that passed the
+  // name rules (D8 deliberately rejected accepting a free-text name here).
+  regenerate_from_run_id: z.string().uuid().optional(),
+  alternate_name: z.string().optional(),
+})
+  // Either both or neither: `regenerate_from_run_id` alone has no name to select, and
+  // `alternate_name` alone has no candidate set to validate it against. Caught here so the
+  // route never has to express "half a regenerate" as a runtime branch.
+  .refine((body) => Boolean(body.regenerate_from_run_id) === Boolean(body.alternate_name), {
+    message: "regenerate_from_run_id and alternate_name must be sent together",
+    path: ["alternate_name"],
+  });
 export type GenerateRequest = z.infer<typeof GenerateRequestSchema>;
 
 const ToneNotesSchema = z.object({

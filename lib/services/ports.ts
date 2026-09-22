@@ -80,6 +80,11 @@ export interface NewRun {
   // The failed run this one is retrying without redoing its already-succeeded steps — a new
   // run row, not a continuation of the old one (runs stay create-once/finish-once).
   resumedFromRunId?: string;
+  // D30: the succeeded run this one branched off by picking a different name candidate. Kept
+  // apart from resumedFromRunId on purpose — a resume retries a run that errored, a regenerate
+  // forks one that worked, and collapsing them would make the Runs tab report every regenerate
+  // as a failure retry.
+  regeneratedFromRunId?: string;
   // Set only on `source: "eval"` runs, from the harness's `X-Eval-Run-Id` (TRD.md §8/§9) —
   // traceability from this run back to the eval_runs row that produced it.
   evalRunId?: string;
