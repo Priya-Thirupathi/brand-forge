@@ -11,6 +11,7 @@ import { renderRetryFeedback } from "@/lib/domain/prompts/retryFeedback";
 import { checkBannedWordInIdea } from "@/lib/domain/guardrails/inputRules";
 import { buildRejectedOutcome, buildSucceededOutcome, type GenerationOutcome } from "@/lib/domain/result";
 import { resolveModel } from "@/config/routing";
+import type { ModelTier } from "@/lib/contracts/eval";
 import type {
   Clock,
   ErrorFailure,
@@ -69,6 +70,10 @@ export interface RunGenerationInput {
   regenerate?: { fromRunId: string; naming: NamingAccepted };
   // Present only on `source: "eval"` runs — see NewRun.evalRunId.
   evalRunId?: string;
+  // D32, Stage 5 item 4: moves one or more steps to the other model tier for this run only,
+  // set from `X-Eval-Model-Tier`. Eval-sourced runs only — a user run always uses the committed
+  // STEP_TIER map, so the experiment can never change what the live demo actually does.
+  modelTierOverride?: Partial<Record<StepName, ModelTier>>;
   // Stage 2 sensitivity proof (TRD.md §9): swaps in an alternate naming prompt for this run
   // only, selected via `X-Eval-Prompt-Variant: naming=degraded`. Absent on every user-sourced
   // and ordinary eval run.
@@ -152,7 +157,7 @@ export async function runGeneration(
   const stepCtx = (step: StepName) => ({
     llmClient: deps.llmClient,
     clock,
-    model: resolveModel(step),
+    model: resolveModel(step, input.modelTierOverride),
     deadlineAt,
     signal: options.signal,
     onEvent: options.onEvent,

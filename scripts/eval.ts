@@ -6,6 +6,8 @@ import { createEvalRun, evalRunExists, getEvalRun, getLatestBaseline, listEvalRe
 import { FIXTURE_CASES, FIXTURE_VERSION } from "@/lib/eval/fixture";
 import { runEvalFixture } from "@/lib/eval/runner";
 import { computeAggregate, compareEvalRuns } from "@/lib/eval/aggregate";
+import { parseEvalModelTiers } from "@/lib/contracts/eval";
+import { resolveTier, tiersAreDistinct } from "@/config/routing";
 
 // TRD.md §9 "CLI": `npm run eval -- generate ...` and `npm run eval -- compare ...`. A thin
 // argv/console layer over lib/eval — all the actual logic lives there so it stays testable
@@ -15,7 +17,7 @@ async function main() {
   const [command, ...rest] = process.argv.slice(2);
   if (command === "generate") return runGenerate(rest);
   if (command === "compare") return runCompare(rest);
-  console.error('Usage: npm run eval -- generate --target URL --label NAME [--repeats 3] [--set-baseline] [--prompt-variant naming=degraded] [--resume EVAL_RUN_ID]');
+  console.error('Usage: npm run eval -- generate --target URL --label NAME [--repeats 3] [--set-baseline] [--prompt-variant naming=degraded] [--model-tier naming=cheap] [--resume EVAL_RUN_ID]');
   console.error("       npm run eval -- compare --run EVAL_RUN_ID [--baseline EVAL_RUN_ID]");
   process.exit(1);
 }
@@ -29,6 +31,8 @@ async function runGenerate(argv: string[]) {
       repeats: { type: "string", default: "3" },
       "set-baseline": { type: "boolean", default: false },
       "prompt-variant": { type: "string" },
+      "model-tier": { type: "string" },
+      "allow-same-model": { type: "boolean", default: false },
       resume: { type: "string" },
       rpm: { type: "string", default: process.env.EVAL_TARGET_RPM ?? "6" },
     },
@@ -40,6 +44,25 @@ async function runGenerate(argv: string[]) {
   const target = values.target.replace(/\/$/, "");
   const repeats = Number(values.repeats);
   const rpm = Number(values.rpm);
+
+  // D32: D12's routing experiment only means anything if the two tiers are actually different
+  // models. On Groq/Qwen they are the same id (D26), so this would compare a model against
+  // itself and report "no flagged regression" — a result that reads as evidence for moving a
+  // step down while being nothing of the sort. Refuse by default rather than produce it.
+  const modelTier = values["model-tier"];
+  if (modelTier) {
+    if (!parseEvalModelTiers(modelTier)) {
+      throw new Error(`--model-tier ${modelTier}: expected e.g. "naming=cheap" or "naming=cheap,packaging=cheap"`);
+    }
+    if (!tiersAreDistinct() && !values["allow-same-model"]) {
+      throw new Error(
+        `--model-tier is pointless here: MODEL_STRONG and MODEL_CHEAP both resolve to "${resolveTier("strong")}", ` +
+          "so this run would compare a model against itself and report no regression. " +
+          "Set MODEL_CHEAP to a genuinely different model, or pass --allow-same-model if you " +
+          "really do want a control run against identical routing.",
+      );
+    }
+  }
 
   const pool = createDbPool();
   try {
@@ -66,6 +89,7 @@ async function runGenerate(argv: string[]) {
       evalRunId,
       repeats,
       promptVariant: values["prompt-variant"],
+      modelTier,
       rpm,
       pool,
       judgeClient: createLlmClient(),

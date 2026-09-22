@@ -19,6 +19,8 @@ export interface RunnerOptions {
   evalRunId: string;
   repeats: number;
   promptVariant?: string;
+  // D32: `naming=cheap,packaging=cheap`, forwarded verbatim as X-Eval-Model-Tier.
+  modelTier?: string;
   rpm: number;
   pool: Pool;
   judgeClient: LlmClient;
@@ -155,6 +157,7 @@ async function runOneCase(
     "x-eval-run-id": options.evalRunId,
   };
   if (options.promptVariant) headers["x-eval-prompt-variant"] = options.promptVariant;
+  if (options.modelTier) headers["x-eval-model-tier"] = options.modelTier;
 
   const startedAt = Date.now();
   const response = await doFetch(`${options.target}/api/generate`, {

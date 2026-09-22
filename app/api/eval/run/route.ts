@@ -30,6 +30,9 @@ const RequestSchema = z.object({
   label: z.string().min(1).max(200).optional(),
   repeats: z.number().int().min(1).max(5).default(1),
   prompt_variant: z.string().optional(),
+  // D32: same string shape the CLI's --model-tier takes; validated by the generate route, which
+  // 400s on anything it doesn't recognise rather than falling back to committed routing.
+  model_tier: z.string().optional(),
   set_baseline: z.boolean().default(false),
   resume_eval_run_id: z.string().uuid().optional(),
   rpm: z.number().min(0.1).max(60).optional(),
@@ -47,7 +50,7 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return validationErrorResponse(parsed.error);
   }
-  const { label, prompt_variant: promptVariant, set_baseline: setBaselineFlag, resume_eval_run_id: resumeId, rpm } = parsed.data;
+  const { label, prompt_variant: promptVariant, model_tier: modelTier, set_baseline: setBaselineFlag, resume_eval_run_id: resumeId, rpm } = parsed.data;
 
   let evalRunId: string;
   let repeats: number;
@@ -81,6 +84,7 @@ export async function POST(request: NextRequest) {
     evalRunId,
     repeats,
     promptVariant,
+    modelTier,
     rpm: rpm ?? Number(process.env.EVAL_TARGET_RPM ?? 6),
     pool,
     judgeClient: createLlmClient(),

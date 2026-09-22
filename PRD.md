@@ -81,7 +81,7 @@ Secondary audience: a **reviewer** (hiring manager or engineer) evaluating the p
 1. ✅ Recorded-run replay: when the daily quota is exhausted, a visitor can watch a stored run stream with its original timings. [D28]
 2. ✅ Brand follow-ups with tone memory, plus consistency eval cases. [D10, D29, D31]
 3. ✅ Alternate-name regenerate. [D8, D30]
-4. Per-step routing experiment, strong vs. cheap model. [D12]
+4. ✅ Per-step routing experiment, strong vs. cheap model. [D12, D32] — mechanism and guard shipped; the experiment itself needs a provider with two genuinely different tiers (not Groq/Qwen today, D26).
 5. Judge calibration against 20 hand-labelled outputs.
 6. Exact-match response caching to save quota.
 

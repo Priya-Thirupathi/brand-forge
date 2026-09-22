@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { StepNameSchema, type StepName } from "./stepName";
 
 // TRD.md §4/§9 (Stage 2). Shared by the CLI (lib/eval), the Postgres eval store, and
 // GET /api/eval/summary — contracts may only import zod [D23].
@@ -16,6 +17,28 @@ export function parseEvalPromptVariant(header: string): EvalPromptVariant | null
   const [step, variant] = header.split("=", 2);
   if (step === "naming" && variant === "degraded") return { step, variant };
   return null;
+}
+
+// D32: the tier a step runs on. Defined here rather than in config/routing.ts because this is
+// the only place it's parsed from untrusted input (an eval header); config/routing.ts imports
+// the type back so there is one source of truth and no pair of enums to drift apart.
+export const ModelTierSchema = z.enum(["strong", "cheap"]);
+export type ModelTier = z.infer<typeof ModelTierSchema>;
+
+// `X-Eval-Model-Tier: naming=cheap,packaging=cheap` — D12's Stage 5 experiment, moving one or
+// more steps down a tier for a single eval run. Parsed as narrowly as parseEvalPromptVariant:
+// an unrecognised step or tier must 400, never silently route to a default and record a
+// comparison of something other than what was asked for.
+export function parseEvalModelTiers(header: string): Partial<Record<StepName, ModelTier>> | null {
+  const tiers: Partial<Record<StepName, ModelTier>> = {};
+  for (const pair of header.split(",")) {
+    const [step, tier] = pair.trim().split("=", 2);
+    const parsedStep = StepNameSchema.safeParse(step);
+    const parsedTier = ModelTierSchema.safeParse(tier);
+    if (!parsedStep.success || !parsedTier.success) return null;
+    tiers[parsedStep.data] = parsedTier.data;
+  }
+  return Object.keys(tiers).length > 0 ? tiers : null;
 }
 
 export const EvalExpectedOutcomeSchema = z.enum(["pass", "reject", "safe"]);

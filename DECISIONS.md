@@ -494,6 +494,26 @@ Naming is skipped through the same switch a resume and a follow-up already use �
 
 ---
 
+### D32 — The routing experiment refuses to compare a model against itself
+
+**Added 2026-09-23.** Implements the Stage 5 half of [D12].
+
+**Decision:** `POST /api/generate` accepts an eval-only `X-Eval-Model-Tier: naming=cheap,packaging=cheap` header, overriding `config/routing.ts`'s committed `STEP_TIER` map for that run only. `npm run eval -- generate --model-tier naming=cheap` sets it, and the existing paired-CI comparison (D18) then answers D12's question: does moving this step down flag a quality regression? User-sourced runs cannot reach the override at all — it is parsed inside `resolveEvalAdmission`, so the live demo always uses committed routing no matter what a visitor sends.
+
+**The point of this entry is the guard, not the header.** On Groq/Qwen, `MODEL_STRONG` and `MODEL_CHEAP` are the *same model id* — D26 set them that way because Groq exposes no second tier. Running the experiment there compares a model against itself and reports "no flagged regression", which reads exactly like evidence that a step is safe to move down. It is not evidence of anything. The CLI therefore refuses to start when `tiersAreDistinct()` is false, naming the model both tiers resolved to, unless `--allow-same-model` is passed for a deliberate control run.
+
+**Why an override rather than editing `STEP_TIER`:** D12 requires a step to move down only once measured. Editing the committed map to run the experiment inverts that — the change ships first and is measured afterwards, on a map that already changed. An override keeps the committed routing honest while the candidate run exists alongside it, and `eval_runs.models` already records the model each step actually used, so the stored comparison says which configuration produced it without a new column.
+
+**Why parsing is all-or-nothing:** an unrecognised step or tier returns null and 400s. A partially-applied override would run some steps on committed routing while the stored comparison claimed the whole experiment had been applied — a mislabelled result is worse than a rejected request.
+
+**Rejected:**
+- *Editing `STEP_TIER` directly to run the experiment* — ships the change before the measurement that was supposed to justify it.
+- *Letting user runs pass the header* — makes the public demo's routing a function of request headers.
+- *Warning instead of refusing on identical tiers* — a warning scrolls past; the number it produces gets stored, compared, and quoted later.
+- *A new `eval_runs` column for the tier override* — `models` already records the resolved model per step, which is the thing that actually mattered.
+
+---
+
 ## Open items — need a human
 1. **Quota numbers.** Read the project's requests-per-minute and requests-per-day for both models on the AI Studio rate-limit page, then set `GLOBAL_DAILY_GENERATION_CAP` ≤ RPD ÷ 6 (worst case: 3 steps × 2 attempts).
 2. **Feasibility numbers.** Seed values are labelled illustrative but need a plausibility pass.

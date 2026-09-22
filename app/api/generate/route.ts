@@ -1,8 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { GenerateRequestSchema, type GenerateErrorCode, type GenerateEvent, type GenerateResult } from "@/lib/contracts/generate";
-import { parseEvalPromptVariant } from "@/lib/contracts/eval";
+import { parseEvalModelTiers, parseEvalPromptVariant, type ModelTier } from "@/lib/contracts/eval";
 import type { FeasibilityOptionFacts } from "@/lib/domain/types";
 import type { GenerationOutcome } from "@/lib/domain/result";
+import type { StepName } from "@/lib/contracts/stepName";
 import { namingDegradedAgent } from "@/lib/domain/agents/namingDegraded";
 import type { NamingAccepted, NamingInput, NamingOutput } from "@/lib/domain/agents/naming";
 import type { AgentSpec } from "@/lib/domain/agents/types";
@@ -36,6 +37,8 @@ interface EvalAdmission {
   source: "user" | "eval";
   evalRunId?: string;
   namingAgentOverride?: AgentSpec<NamingInput, NamingOutput, NamingAccepted>;
+  // D32: eval-only, like namingAgentOverride — a user run always uses the committed STEP_TIER.
+  modelTierOverride?: Partial<Record<StepName, ModelTier>>;
 }
 
 // TRD.md §8/§10 (Stage 2): a valid `X-Eval-Token` makes this request `source: "eval"` and
@@ -67,7 +70,20 @@ async function resolveEvalAdmission(request: NextRequest): Promise<{ ok: true; a
     namingAgentOverride = namingDegradedAgent;
   }
 
-  return { ok: true, admission: { source: "eval", evalRunId, namingAgentOverride } };
+  // D32: `X-Eval-Model-Tier: naming=cheap,packaging=cheap`. Parsed narrowly — an unknown step
+  // or tier is a 400, never a silent fall back to the committed routing, which would record a
+  // comparison of a configuration nobody asked for.
+  const tierHeader = request.headers.get("x-eval-model-tier");
+  let modelTierOverride: Partial<Record<StepName, ModelTier>> | undefined;
+  if (tierHeader) {
+    const tiers = parseEvalModelTiers(tierHeader);
+    if (!tiers) {
+      return { ok: false, response: errorResponse("invalid_input", `Unknown X-Eval-Model-Tier "${tierHeader}".`, 400) };
+    }
+    modelTierOverride = tiers;
+  }
+
+  return { ok: true, admission: { source: "eval", evalRunId, namingAgentOverride, modelTierOverride } };
 }
 
 export async function POST(request: NextRequest) {
@@ -80,7 +96,7 @@ export async function POST(request: NextRequest) {
   if (!evalAdmission.ok) {
     return evalAdmission.response;
   }
-  const { source, evalRunId, namingAgentOverride } = evalAdmission.admission;
+  const { source, evalRunId, namingAgentOverride, modelTierOverride } = evalAdmission.admission;
 
   const json = await request.json().catch(() => null);
   const parsed = GenerateRequestSchema.safeParse(json);
@@ -181,6 +197,7 @@ export async function POST(request: NextRequest) {
     regenerate,
     evalRunId,
     namingAgentOverride,
+    modelTierOverride,
   };
 
   if (request.headers.get("accept") === "application/x-ndjson") {
