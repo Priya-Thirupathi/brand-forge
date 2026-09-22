@@ -540,6 +540,35 @@ Naming is skipped through the same switch a resume and a follow-up already use �
 
 ---
 
+### D34 — Exact-match caching, keyed on the configuration as well as the input
+
+**Added 2026-09-23.** Stage 5 item 6.
+
+**Decision:** An identical user request returns the stored result of the earlier one instead of spending three model calls. The cache **is** the `runs` table — a hit returns the run, brand and product that already exist, writes nothing, and creates no gallery card for work that was never done. The result carries `from_cache: true` and the Generate tab says so plainly, for the same reason D28's replay carries a badge. `GENERATION_CACHE=off` disables it for a live demo.
+
+**What the key includes, and why each part is load-bearing:**
+- *Idea, exactly* (trimmed, case-insensitive). No fuzzy matching and no embeddings: "close enough" means handing a founder copy written for somebody else's product. Exact match is the only version of this that is safe without a human in the loop, and it is the version PRD.md actually asks for.
+- *Category and feasibility option*, both of which feed the prompts.
+- *Prompt versions* — content hashes (D17), so editing a prompt makes every prior result a miss instead of serving copy the current prompts would never produce.
+- *The per-step model.* **This project swapped its entire provider in production** (D2, Gemini to Qwen, 2026-09-20). A cache keyed only on the input would have gone on serving the old provider's copy indefinitely, and the swap D2 is proud of would have been invisible to anyone who had generated before it.
+
+**Why eval traffic never reads the cache.** This is the one that would have quietly destroyed the harness. The fixture runs 3 repeats per case *to measure run-to-run variance* — that variance is what every confidence interval in D18 is computed from. Served from cache, repeats 2 and 3 return byte-identical rows, variance collapses to zero, and every CI narrows to nothing: the harness would report itself as extraordinarily precise at the exact moment it stopped measuring anything. `source === "user"` gates the lookup.
+
+**Why a cache hit is checked before the rate limit:** it costs no model quota, so counting it against the daily cap would throw away the saving the cache exists to create. It also means a visitor arriving after the cap is reached still gets a real answer to an idea someone else already asked — the same goal D28's replay serves, reached more directly. Since no `runs` row is written, `countRuns` ignores cache hits naturally rather than by special-casing.
+
+**Why a run that skipped a step is never a cache candidate:** a follow-up (D29) or regenerate (D30) never calls naming, and its copy was shaped by inputs the key doesn't capture — an inherited tone, a pinned name. Requiring every step's model to match the currently-resolved one excludes them as a side effect of a check that was needed anyway.
+
+**Why no step events on a streamed cache hit:** `run_started` then `result`, nothing between. Synthesising `step_finished` events would draw a progress bar for work that never happened.
+
+**Rejected:**
+- *Fuzzy or embedding-based matching* — serves one founder another's copy, and needs a vector store to do it.
+- *A dedicated cache table* — a second copy of data `runs`/`products`/`brands` already hold, with its own invalidation problem.
+- *Caching eval traffic* — collapses the variance the eval exists to measure.
+- *Writing a new run row for a cache hit* — records a generation that did not happen, in the table whose job is saying what did.
+- *Keying on the input alone* — survives a provider swap, which is exactly when it should not.
+
+---
+
 ## Open items — need a human
 1. **Quota numbers.** Read the project's requests-per-minute and requests-per-day for both models on the AI Studio rate-limit page, then set `GLOBAL_DAILY_GENERATION_CAP` ≤ RPD ÷ 6 (worst case: 3 steps × 2 attempts).
 2. **Feasibility numbers.** Seed values are labelled illustrative but need a plausibility pass.

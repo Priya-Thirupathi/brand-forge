@@ -5,6 +5,9 @@ import type { FeasibilityOptionFacts } from "@/lib/domain/types";
 import type { GenerationOutcome } from "@/lib/domain/result";
 import type { StepName } from "@/lib/contracts/stepName";
 import { namingDegradedAgent } from "@/lib/domain/agents/namingDegraded";
+import { namingAgent } from "@/lib/domain/agents/naming";
+import { taglineDescriptionAgent } from "@/lib/domain/agents/taglineDescription";
+import { packagingAgent } from "@/lib/domain/agents/packaging";
 import type { NamingAccepted, NamingInput, NamingOutput } from "@/lib/domain/agents/naming";
 import type { AgentSpec } from "@/lib/domain/agents/types";
 import type { FeasibilityOption, FinishedRunIds, TransportFailureReason } from "@/lib/services/ports";
@@ -18,6 +21,7 @@ import { findCategory } from "@/lib/adapters/postgres/catalog";
 import { loadResumableAccepted } from "@/lib/adapters/postgres/resume";
 import { loadFollowUpBrand } from "@/lib/adapters/postgres/brand";
 import { loadAlternateNaming } from "@/lib/adapters/postgres/regenerate";
+import { findCachedRun } from "@/lib/adapters/postgres/cache";
 import { hashIp } from "@/lib/adapters/postgres/ipHash";
 import { getClientIp } from "@/lib/adapters/clientIp";
 import { errorResponse, validationErrorResponse } from "../_shared/response";
@@ -147,6 +151,36 @@ export async function POST(request: NextRequest) {
     regenerate = { fromRunId: regenerateFromRunId, naming: alternate.naming };
   }
 
+  // D34: an identical earlier request's result, returned without spending any model calls.
+  // Checked before the rate limit on purpose — a cache hit costs no quota, so counting it
+  // against the daily cap would throw away the saving the cache exists to make. It also means
+  // a visitor arriving after the cap is reached still gets a real answer for an idea someone
+  // already asked. Never for eval traffic: repeats exist to measure run-to-run variance, and
+  // serving them identical rows would collapse that variance and make every confidence
+  // interval meaningless. Never for resume/follow-up/regenerate either — see cache.ts.
+  const cacheable = source === "user" && !resumeFromRunId && !followUpBrand && !regenerate && process.env.GENERATION_CACHE !== "off";
+  if (cacheable) {
+    const cached = await findCachedRun(pool, {
+      idea,
+      category: categorySlug,
+      feasibilityOptionId: option.id,
+      promptVersions: {
+        naming: namingAgent.promptVersion,
+        tagline_description: taglineDescriptionAgent.promptVersion,
+        packaging: packagingAgent.promptVersion,
+      },
+    });
+    if (cached) {
+      const result: GenerateResult = { ...cached, from_cache: true };
+      if (request.headers.get("accept") === "application/x-ndjson") {
+        // `run_started` then `result`, and deliberately no step events: no step ran, and
+        // synthesising them would draw a progress bar for work that never happened.
+        return ndjsonOnce([{ type: "run_started", run_id: result.run_id }, { type: "result", result }]);
+      }
+      return NextResponse.json(result);
+    }
+  }
+
   // TRD.md §10: requests with no identifiable IP share one bucket, rather than each bypassing
   // the rate limit entirely.
   const ip = getClientIp(request.headers) ?? "unknown";
@@ -204,6 +238,12 @@ export async function POST(request: NextRequest) {
     return streamGeneration(input, request.signal);
   }
   return respondOnce(input, request.signal);
+}
+
+function ndjsonOnce(events: GenerateEvent[]): Response {
+  return new Response(events.map((event) => `${JSON.stringify(event)}\n`).join(""), {
+    headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no" },
+  });
 }
 
 function toFeasibilityOptionFacts(option: FeasibilityOption): FeasibilityOptionFacts {

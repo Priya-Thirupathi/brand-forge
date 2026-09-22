@@ -126,6 +126,19 @@ Each pick is a new brand, a new product and a new run; nothing overwrites what c
 Gallery shows all of them and `runs.regenerated_from_run_id` records where each one branched from.
 Regenerates chain — you can pick a third name off a result that was itself regenerated.
 
+## Exact-match cache (Stage 5)
+
+Submitting an idea that was generated before — same text, same category, same material option —
+returns that stored result instead of spending three model calls, and the result is labelled as
+such in the UI. Nothing new is written, so the Gallery doesn't grow a second identical card.
+
+The key includes the prompt versions and the model each step would use right now, not just the
+idea, so editing a prompt or switching provider invalidates it rather than serving copy the
+current setup would never produce. Eval traffic ignores the cache entirely — the fixture's
+repeats exist to measure run-to-run variance, and serving them identical rows would erase it.
+
+Set `GENERATION_CACHE=off` when you want every submission to really generate.
+
 ## Moderation
 
 There's no admin UI for removing a generation from the public gallery. Hide one manually:

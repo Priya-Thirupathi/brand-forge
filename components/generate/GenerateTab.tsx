@@ -46,6 +46,9 @@ export function GenerateTab({ followUpTarget, onClearFollowUpTarget }: GenerateT
       {(state.status === "succeeded" || state.status === "rejected") && (
         <div className="flex flex-col gap-4">
           {state.isReplay && <Badge variant="info">Recorded run, replayed with its original timing — not a live generation</Badge>}
+          {/* D34: an identical idea was generated before, so this is that result — no model
+              call was made. Said plainly for the same reason the replay badge exists. */}
+          {state.result.from_cache && <Badge variant="info">Saved result for an identical idea — no new generation was run</Badge>}
           <FeasibilityCard feasibility={state.result.feasibility} />
           {state.status === "succeeded" && (
             <ResultCard

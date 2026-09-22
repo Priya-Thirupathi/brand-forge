@@ -330,6 +330,8 @@ Every body is validated with Zod. Error body (same shape as `booking-app/lib/api
 
 Guardrail rejections return 200 with `status: "rejected"`. [D19]
 
+**`POST /api/generate`** — before admission checks, an exact-match cache lookup [D34]: identical idea (trimmed, case-insensitive) + category + feasibility option + current prompt versions + current per-step model returns that run's stored result with `from_cache: true`, no model calls, no new rows, and no charge against the rate limit. User-sourced requests only; eval traffic bypasses it so repeats keep measuring variance.
+
 **`POST /api/generate`**
 ```ts
 // request

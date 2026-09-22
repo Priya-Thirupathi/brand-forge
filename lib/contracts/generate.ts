@@ -77,6 +77,9 @@ export const GenerateResultSchema = z.object({
   brand: z.object({ id: z.string(), name: z.string(), tone_notes: ToneNotesSchema }).optional(),
   product: z.object({ id: z.string(), tagline: z.string(), description: z.string(), packaging: PackagingSchema }).optional(),
   name_candidates: z.array(NameCandidateSchema).optional(),
+  // D34: this result was served from an earlier identical request, not generated now. Set only
+  // on a cache hit, so an ordinary result's payload is unchanged.
+  from_cache: z.boolean().optional(),
   guardrails: z.object({
     quality_retries: z.number(),
     failure: z
