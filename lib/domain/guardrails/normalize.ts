@@ -29,6 +29,33 @@ export function containsWholeTerm(haystack: string, term: string): boolean {
   return pattern.test(normalizedHaystack);
 }
 
+// Determiners and quantifiers that commonly sit between a negator and the thing negated, as in
+// "without the plastic waste" or "no more plastic". Deliberately small and closed: every entry
+// widens what counts as a negation, and a negation is what stops copy.material's blunt
+// "mentions X" branch from firing (copyRules.ts).
+const NEGATION_FILLERS = ["the", "a", "an", "any", "all", "more"];
+
+// Whole-word match for "<negator> [filler] <term>" — "no plastic", "without the plastic". The
+// filler is why this can't just be containsWholeTerm over a list of pre-joined phrases: real
+// copy puts a determiner in the middle often enough that a plain phrase match misses it.
+export function containsNegatedTerm(haystack: string, negators: readonly string[], term: string): boolean {
+  const normalizedTerm = normalizeForMatching(term);
+  if (!normalizedTerm) return false;
+
+  const negatorPattern = negators
+    .map((negator) => normalizeForMatching(negator))
+    .filter(Boolean)
+    .map(escapeRegExp)
+    .join("|");
+  if (!negatorPattern) return false;
+
+  const fillerPattern = NEGATION_FILLERS.map(escapeRegExp).join("|");
+  const pattern = new RegExp(
+    `(^|\\s)(${negatorPattern})(\\s+(${fillerPattern}))?\\s+${escapeRegExp(normalizedTerm)}(\\s|$)`,
+  );
+  return pattern.test(normalizeForMatching(haystack));
+}
+
 export function countWords(text: string): number {
   const trimmed = text.trim();
   if (trimmed === "") return 0;

@@ -3,8 +3,8 @@ import { StepNameSchema } from "./stepName";
 
 // TRD.md §8 GET /api/runs: metadata only. Deliberately narrower than a Violation
 // (lib/contracts/violation.ts) — the rule id, not its message, since a message can echo
-// LLM-generated content back into a public listing; never raw_output, idea text of a
-// non-succeeded run, or an IP hash (TRD.md §4 run_steps.raw_output, runs.client_ip_hash).
+// LLM-generated content back into a public listing; never raw_output or the idea text of a
+// non-succeeded run (TRD.md §4 run_steps.raw_output).
 export const RunSummarySchema = z.object({
   id: z.string(),
   created_at: z.string(),

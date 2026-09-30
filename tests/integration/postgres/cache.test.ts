@@ -25,9 +25,9 @@ interface FixtureOverrides {
 
 async function insertRun(overrides: FixtureOverrides = {}): Promise<string> {
   const { rows } = await testPool.query<{ id: string }>(
-    `insert into runs (source, idea, category, feasibility_option_id, status, prompt_versions, client_ip_hash,
+    `insert into runs (source, idea, category, feasibility_option_id, status, prompt_versions,
                        quality_retries, transport_retries, input_tokens, output_tokens, thinking_tokens, latency_ms)
-     values ($1, $2, $3, $4, $5, $6::jsonb, 'h', 0, 0, 10, 20, 0, 1200) returning id`,
+     values ($1, $2, $3, $4, $5, $6::jsonb, 0, 0, 10, 20, 0, 1200) returning id`,
     [
       overrides.source ?? "user",
       overrides.idea ?? "a steel water bottle for cyclists",

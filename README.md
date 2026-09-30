@@ -34,7 +34,7 @@ boundaries — see `TRD.md` §2 and D23.
 ```bash
 docker compose up -d db
 npm install
-cp .env.local.example .env.local   # fill in GROQ_API_KEY and IP_HASH_SALT at minimum
+cp .env.local.example .env.local   # fill in GROQ_API_KEY at minimum
 npm run migrate
 npm run seed
 npm run dev
@@ -92,7 +92,7 @@ npm run eval -- compare --run <the naming-degraded eval run's id>
 
 Runs the 20-case fixture (`lib/eval/fixture.ts`) against a live target over HTTP — the same
 `/api/generate` a browser calls, authenticated as eval traffic via `EVAL_TOKEN` (see `DECISIONS.md`
-D27), so it bypasses the per-IP/global rate limits meant for real users. Each case × repeat is
+D27), so the daily cap never blocks it — though its runs do count toward that cap. Each case × repeat is
 scored (a judge model rates relevance/distinctiveness) and persisted as it completes, so an
 interrupted run can continue later with `--resume <eval_run_id>` instead of starting over. Results
 show up under the app's own "Under the hood" tab once `finished_at` is set.

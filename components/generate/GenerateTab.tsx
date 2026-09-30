@@ -27,9 +27,9 @@ export function GenerateTab({ followUpTarget, onClearFollowUpTarget }: GenerateT
   const { state, generate, resume, regenerate, watchReplay, reset } = useGeneration();
   const running = state.status === "running";
   const resumable = state.status === "run_error" && state.step !== "naming";
-  // Stage 5, item 1: offered specifically when the *quota* is the problem — not a per-IP
-  // throttle (rate_limited) or a transient run failure (deadline_exceeded/provider_error/
-  // internal/aborted), where an ordinary retry is the right call and already offered below.
+  // Stage 5, item 1: offered specifically when the *quota* is the problem — not a transient run
+  // failure (deadline_exceeded/provider_error/internal/aborted), where an ordinary retry is the
+  // right call and already offered below.
   const replayOffered =
     (state.status === "admission_error" && state.error === "daily_cap_reached") || (state.status === "run_error" && state.code === "quota_exhausted");
 

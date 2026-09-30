@@ -126,9 +126,8 @@ export function GenerateForm({ disabled, onSubmit, followUpTarget, onClearFollow
       </label>
 
       <p className="text-xs leading-relaxed text-muted">
-        Your idea is sent to an AI model to generate the brand copy. Your IP address is hashed and used only to enforce
-        generation rate limits — it isn&apos;t stored in the clear. If your generation succeeds, the idea and resulting
-        brand may appear in the public gallery.
+        Your idea is sent to an AI model to generate the brand copy. If your generation succeeds, the idea and
+        resulting brand may appear in the public gallery.
       </p>
 
       <button

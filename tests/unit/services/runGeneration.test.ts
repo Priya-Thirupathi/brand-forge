@@ -131,7 +131,6 @@ function baseInput(overrides: Partial<RunGenerationInput> = {}): RunGenerationIn
     feasibilityOptionId: "option-1",
     option,
     source: "user",
-    clientIpHash: "hash",
     ...overrides,
   };
 }

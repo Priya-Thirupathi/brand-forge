@@ -40,7 +40,7 @@ Secondary audience: a **reviewer** (hiring manager or engineer) evaluating the p
 1. As a user, I choose a category and a material from lists, enter a one-sentence idea, and receive three brand name candidates (one selected), a tagline, a description, and packaging copy. [D1, D8]
 2. As a user, I see an illustrative feasibility estimate — material, per-unit cost range, minimum order quantity, lead-time range, and first-run cash needed — and the copy never claims a material the estimate doesn't assume. [D9]
 3. As a user, I see progress step by step instead of a blank spinner. [D13]
-4. As a user, I never see broken, empty, or policy-violating output. If a generation can't pass guardrails after a retry, I see which step failed and why, with a "Try again" action — never the failing content. [D7]
+4. As a user, I never see broken, empty, or policy-violating output. If a generation can't pass guardrails after a retry, I get a clear outcome and a way to try again — the reason when the problem is my own input, a plain apology when it was the model — never the failing content. [D7]
 5. As a user, I'm told upfront that submitted ideas are stored and may appear publicly, so I don't enter anything confidential. [D6]
 6. As a user who hits a usage limit or the demo's daily quota, I see a clear message, and the gallery still works. [D5, D21]
 7. As a user, I can browse the public gallery of generated brands, filtered by category. [D6]
@@ -56,10 +56,10 @@ Secondary audience: a **reviewer** (hiring manager or engineer) evaluating the p
 - Feasibility-first agent chain: feasibility lookup → naming (3 candidates) → tagline/description → packaging copy. [D9]
 - Guardrails: banned words on input, plus the active provider's own safety feedback when it's Gemini (not available on Qwen/Groq — D2, D26); on output, schema shape, lengths and counts, banned words, regulated health/certification claims, material-claim consistency, famous-brand collisions, leaked placeholders. One quality retry with feedback per step. [D11, D17, D22]
 - Transport retries for throttling and transient errors, bounded by the run deadline. [D21]
-- Rejection, rate-limit, and quota-reached UI states. [D5, D7]
+- Rejection and quota-reached UI states. [D5, D7]
 - Streaming progress per agent step. [D13]
 - Persistence of runs, per-attempt step records, brands, and products in Postgres. [D20]
-- Protections: per-IP and global generation limits, server-only database access with RLS. [D5, D15, D16]
+- Protections: a global rolling-24h generation cap, server-only database access with RLS. No client identifier is stored. [D5, D15, D16]
 - Single-page UI with tabs: *Generate*, *Gallery* (category filter), *Under the hood* (recent runs).
 - Layered code with lint-enforced boundaries, unit and integration tests, CI. [D23]
 
@@ -103,7 +103,7 @@ M1 and M2 are paired on purpose: M1 alone could be met by rejecting everything. 
 | Risk | Mitigation |
 |---|---|
 | Free-tier quota is low, per project, and not guaranteed | Transport retries; global daily cap; quota-reached notice; Stage 5 recorded-run replay; resumable eval |
-| Free-tier content may be used by the provider to improve its products (Gemini; Groq's Qwen terms differ) | **Not currently disclosed** — the Generate tab's notice covers storage/public-visibility/IP-hashing only, not this (found 2026-09-20 auditing D6; was never actually shipped despite this row previously claiming it was) |
+| Free-tier content may be used by the provider to improve its products (Gemini; Groq's Qwen terms differ) | **Not currently disclosed** — the Generate tab's notice covers storage and public visibility only, not this (found 2026-09-20 auditing D6; was never actually shipped despite this row previously claiming it was) |
 | LLM output variability | Per-step quality retry with feedback; 3 name candidates; repeats and confidence intervals in eval |
 | LLM judge bias (the provider judging its own output) | Pinned judge model, preferably a different generation than the generator; deterministic metrics alongside; Stage 5 calibration against human labels |
 | Illustrative feasibility numbers mistaken for real quotes | "Illustrative estimate" label; every option carries a visible assumptions note |

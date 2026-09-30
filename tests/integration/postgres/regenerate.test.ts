@@ -26,8 +26,8 @@ const CANDIDATES = [
 async function insertRun(nameCandidates: unknown): Promise<string> {
   const { rows } = await testPool.query<{ id: string }>(
     `insert into runs
-       (source, idea, category, feasibility_option_id, status, prompt_versions, name_candidates, client_ip_hash)
-     values ('user', 'a trail water bottle', $1, $2, 'succeeded', '{}'::jsonb, $3::jsonb, 'hash-a')
+       (source, idea, category, feasibility_option_id, status, prompt_versions, name_candidates)
+     values ('user', 'a trail water bottle', $1, $2, 'succeeded', '{}'::jsonb, $3::jsonb)
      returning id`,
     [seeded.category, seeded.defaultOptionId, nameCandidates === null ? null : JSON.stringify(nameCandidates)],
   );

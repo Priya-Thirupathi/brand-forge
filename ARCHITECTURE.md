@@ -12,7 +12,7 @@ the full spec where one exists.
 ```
 POST /api/generate
   1. Zod-validate the body, resolve category + material → a feasibility option (TRD §3)
-  2. Rate-limit check (per-IP + global, Postgres-counted, TRD §10) — nothing persisted yet
+  2. Daily-cap check (one global rolling-24h count, Postgres-counted, TRD §10) — nothing persisted yet
   3. Input guardrails (banned words, TRD §7) — reject before any LLM call
   4. naming → tagline_description → packaging, each through the same runStep loop (below)
   5. One Postgres transaction: run_steps + brand + product, or nothing at all
@@ -47,11 +47,13 @@ invisible to the domain layer. Quality retries (one, with the failed rules appen
 live in the service layer and never see a network error. `TRD.md` §5's timeout/retry table has the
 exact numbers.
 
-**Guardrails run before anything is shown, not after (D7).** A rejected run surfaces which rule
-failed and a plain-language reason — never the content that failed it. This is a real product
-constraint (the app promises no generated output slips past a rejection), and it's also what
-makes the eval harness's `outcome_match_rate` metric meaningful: a "rejected" case and a "the model
-tried and the judge scored it low" case are distinguishable by construction, not by inspecting text.
+**Guardrails run before anything is shown, not after (D7).** No generated output slips past a
+rejection. What the visitor is *told* depends on whose fault it was: a rule broken by their own
+idea (a banned word) names the rule, because only they can fix it; a rule broken by our model
+output gets a generic notice, because a rule list they can't act on is noise. Either way the step
+and every violation are persisted, so the eval harness's `outcome_match_rate` stays meaningful —
+a "rejected" case and a "the model tried and the judge scored it low" case are distinguishable by
+construction, not by inspecting text.
 
 ## The manufacturing constraint (the part that isn't just an LLM wrapper)
 

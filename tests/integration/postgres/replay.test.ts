@@ -33,9 +33,9 @@ async function insertReplayableFixture(overrides: RunOverrides = {}): Promise<{ 
     `insert into runs
        (source, idea, category, feasibility_option_id, status, prompt_versions, name_candidates,
         quality_retries, transport_retries, input_tokens, output_tokens, thinking_tokens, latency_ms,
-        client_ip_hash, created_at)
+        created_at)
      values ('user', 'a trail water bottle', $1, $2, $3, '{}'::jsonb, $4::jsonb,
-             0, 0, 100, 200, 10, 1500, 'hash-a', coalesce($5::timestamptz, now()))
+             0, 0, 100, 200, 10, 1500, coalesce($5::timestamptz, now()))
      returning id`,
     [category.category, category.defaultOptionId, overrides.status ?? "succeeded", JSON.stringify(overrides.nameCandidates ?? DEFAULT_NAME_CANDIDATES), overrides.createdAt ?? null],
   );

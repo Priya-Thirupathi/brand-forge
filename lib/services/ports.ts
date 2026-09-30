@@ -76,7 +76,6 @@ export interface NewRun {
   idea: string;
   category: string;
   feasibilityOptionId: string;
-  clientIpHash: string;
   // The failed run this one is retrying without redoing its already-succeeded steps — a new
   // run row, not a continuation of the old one (runs stay create-once/finish-once).
   resumedFromRunId?: string;
@@ -175,7 +174,7 @@ export interface FinishedRunIds {
 
 export interface GenerationStore {
   findOption(category: string, optionId?: string): Promise<FeasibilityOption | null>;
-  countRuns(filter: { ipHash?: string; since: Date }): Promise<number>;
+  countRuns(filter: { since: Date }): Promise<number>;
   startRun(run: NewRun): Promise<string>;
   finishRun(record: FinishedRun): Promise<FinishedRunIds | undefined>; // one transaction
 }

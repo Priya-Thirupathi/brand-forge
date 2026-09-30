@@ -26,7 +26,6 @@ function newRun(overrides: Partial<NewRun> = {}): NewRun {
     idea: "a reusable water bottle for hikers",
     category: category.category,
     feasibilityOptionId: category.defaultOptionId,
-    clientIpHash: "hash-a",
     ...overrides,
   };
 }
@@ -83,15 +82,16 @@ describe("createPostgresGenerationStore", () => {
       expect(await store.countRuns({ since: new Date(0) })).toBe(0);
     });
 
-    it("counts only source = 'user' runs within the window, scoped by ipHash when given", async () => {
-      await store.startRun(newRun({ clientIpHash: "hash-a" }));
-      await store.startRun(newRun({ clientIpHash: "hash-a" }));
-      await store.startRun(newRun({ clientIpHash: "hash-b" }));
-      await store.startRun(newRun({ source: "eval", clientIpHash: "hash-a" }));
+    // Eval runs are counted on purpose: they spend the same provider quota the global cap
+    // exists to protect. They're still never blocked by it — the route only consults the cap
+    // for `source: "user"` — but they no longer spend the day's budget invisibly.
+    it("counts runs of every source within the window, eval included", async () => {
+      await store.startRun(newRun());
+      await store.startRun(newRun());
+      await store.startRun(newRun());
+      await store.startRun(newRun({ source: "eval" }));
 
-      expect(await store.countRuns({ since: new Date(0) })).toBe(3); // eval run excluded
-      expect(await store.countRuns({ since: new Date(0), ipHash: "hash-a" })).toBe(2);
-      expect(await store.countRuns({ since: new Date(0), ipHash: "hash-c" })).toBe(0);
+      expect(await store.countRuns({ since: new Date(0) })).toBe(4);
     });
 
     it("excludes runs created before the `since` cutoff", async () => {

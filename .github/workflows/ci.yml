@@ -51,7 +51,6 @@ jobs:
       # DATABASE_URL and TEST_DATABASE_URL point at the same service-container database.
       DATABASE_URL: postgresql://brandforge:brandforge@localhost:5432/brandforge
       TEST_DATABASE_URL: postgresql://brandforge:brandforge@localhost:5432/brandforge
-      IP_HASH_SALT: ci-only-salt-not-for-production-use
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

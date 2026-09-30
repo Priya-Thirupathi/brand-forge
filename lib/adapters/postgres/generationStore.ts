@@ -75,32 +75,30 @@ export function createPostgresGenerationStore(pool: Pool): GenerationStore {
     },
 
     async countRuns(filter) {
-      // TRD.md §10: both the per-IP and global limits count only `source = 'user'` runs, any
-      // status — an in-flight `running` row still counts, so a burst of concurrent requests
-      // can't slip past the cap before any of them finishes.
-      const { rows } = filter.ipHash
-        ? await pool.query<{ count: number }>(
-            `select count(*)::int as count from runs where source = 'user' and created_at >= $1 and client_ip_hash = $2`,
-            [filter.since, filter.ipHash],
-          )
-        : await pool.query<{ count: number }>(
-            `select count(*)::int as count from runs where source = 'user' and created_at >= $1`,
-            [filter.since],
-          );
+      // TRD.md §10: the global cap counts runs of *every* source, any status. Eval runs are
+      // included deliberately — they spend the same provider quota the cap exists to protect,
+      // and while they were excluded a fixture run could silently eat a third of the day's
+      // budget while the app still believed it had the full cap left. Eval traffic is still
+      // never *blocked* (the route only consults this for `source: "user"`), just counted.
+      // An in-flight `running` row counts too, so a burst of concurrent requests can't slip
+      // past the cap before any of them finishes.
+      const { rows } = await pool.query<{ count: number }>(
+        `select count(*)::int as count from runs where created_at >= $1`,
+        [filter.since],
+      );
       return rows[0].count;
     },
 
     async startRun(run: NewRun) {
       const { rows } = await pool.query<{ id: string }>(
-        `insert into runs (source, idea, category, feasibility_option_id, status, prompt_versions, client_ip_hash, resumed_from_run_id, regenerated_from_run_id, eval_run_id)
-         values ($1, $2, $3, $4, 'running', '{}'::jsonb, $5, $6, $7, $8)
+        `insert into runs (source, idea, category, feasibility_option_id, status, prompt_versions, resumed_from_run_id, regenerated_from_run_id, eval_run_id)
+         values ($1, $2, $3, $4, 'running', '{}'::jsonb, $5, $6, $7)
          returning id`,
         [
           run.source,
           run.idea,
           run.category,
           run.feasibilityOptionId,
-          run.clientIpHash,
           run.resumedFromRunId ?? null,
           run.regeneratedFromRunId ?? null,
           run.evalRunId ?? null,

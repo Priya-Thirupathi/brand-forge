@@ -22,8 +22,6 @@ import { loadResumableAccepted } from "@/lib/adapters/postgres/resume";
 import { loadFollowUpBrand } from "@/lib/adapters/postgres/brand";
 import { loadAlternateNaming } from "@/lib/adapters/postgres/regenerate";
 import { findCachedRun } from "@/lib/adapters/postgres/cache";
-import { hashIp } from "@/lib/adapters/postgres/ipHash";
-import { getClientIp } from "@/lib/adapters/clientIp";
 import { errorResponse, validationErrorResponse } from "../_shared/response";
 import { evalTokenMatches } from "../_shared/evalAuth";
 
@@ -46,10 +44,10 @@ interface EvalAdmission {
 }
 
 // TRD.md §8/§10 (Stage 2): a valid `X-Eval-Token` makes this request `source: "eval"` and
-// exempts it from checkRateLimit entirely — the harness paces itself (TRD.md §9), and
-// `runs`/`countRuns` already filter `source = user` for the app's own caps, so this bypass
-// just makes that exemption explicit instead of accidental. No header at all is the ordinary,
-// unchanged `source: "user"` path.
+// exempts it from checkRateLimit entirely — the harness paces itself (TRD.md §9), so the cap
+// would only fight that pacing. Note the exemption is from being *blocked*, not from being
+// counted: `countRuns` totals every source, so an eval run still consumes the day's visible
+// budget. No header at all is the ordinary, unchanged `source: "user"` path.
 async function resolveEvalAdmission(request: NextRequest): Promise<{ ok: true; admission: EvalAdmission } | { ok: false; response: NextResponse }> {
   const token = request.headers.get("x-eval-token");
   if (!token) return { ok: true, admission: { source: "user" } };
@@ -91,11 +89,6 @@ async function resolveEvalAdmission(request: NextRequest): Promise<{ ok: true; a
 }
 
 export async function POST(request: NextRequest) {
-  const salt = process.env.IP_HASH_SALT;
-  if (!salt) {
-    return errorResponse("internal", "Server is misconfigured (IP_HASH_SALT is not set).", 500);
-  }
-
   const evalAdmission = await resolveEvalAdmission(request);
   if (!evalAdmission.ok) {
     return evalAdmission.response;
@@ -181,28 +174,12 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // TRD.md §10: requests with no identifiable IP share one bucket, rather than each bypassing
-  // the rate limit entirely.
-  const ip = getClientIp(request.headers) ?? "unknown";
-  const clientIpHash = hashIp(ip, salt);
-
   if (source === "user") {
     const rateLimitDecision = checkRateLimit(
-      {
-        ipRunsInLastHour: await store.countRuns({ ipHash: clientIpHash, since: new Date(Date.now() - HOUR_MS) }),
-        globalRunsInLast24h: await store.countRuns({ since: new Date(Date.now() - DAY_MS) }),
-      },
-      {
-        perIpLimitPerHour: Number(process.env.RATE_LIMIT_GENERATE_PER_HOUR ?? 10),
-        globalDailyCap: Number(process.env.GLOBAL_DAILY_GENERATION_CAP ?? 50),
-      },
+      { globalRunsInLast24h: await store.countRuns({ since: new Date(Date.now() - DAY_MS) }) },
+      { globalDailyCap: Number(process.env.GLOBAL_DAILY_GENERATION_CAP ?? 50) },
     );
     if (!rateLimitDecision.allowed) {
-      if (rateLimitDecision.reason === "rate_limited") {
-        return errorResponse("rate_limited", "Too many generations from this address. Try again later.", 429, {
-          retry_after_s: rateLimitDecision.retryAfterS,
-        });
-      }
       // Not a calendar-day reset — a rolling 24h window that eases gradually as old runs age
       // out (see rateLimitPolicy.ts). "Tomorrow" would overpromise; "in a while" is honest.
       return errorResponse("daily_cap_reached", "The daily generation limit has been reached. Try again in a while — it eases gradually, not at a fixed time.", 429, {
@@ -224,7 +201,6 @@ export async function POST(request: NextRequest) {
     feasibilityOptionId: option.id,
     option: optionFacts,
     source,
-    clientIpHash,
     resumedFromRunId: resumeFromRunId,
     resume,
     followUpBrand,
@@ -357,7 +333,15 @@ function buildGenerateResult(runId: string, outcome: GenerationOutcome, meta: Ru
     name_candidates: outcome.status === "succeeded" ? outcome.nameCandidates : undefined,
     guardrails: {
       quality_retries: outcome.qualityRetries,
-      failure: outcome.status === "rejected" ? outcome.failure : undefined,
+      // Only an `input` rejection's reasons travel to the client: a banned word in the
+      // visitor's own idea is theirs to fix, so naming it is the whole point. A rule broken by
+      // our own model output is ours, not theirs — the step and every violation are still
+      // persisted to `runs.failure`/`run_steps.violations` and still surface on the Runs tab
+      // and to the eval harness, but the Generate tab shows a generic notice instead of a rule
+      // list the visitor can't act on. This is also what keeps model text out of the browser:
+      // `packaging.callouts` and `output.placeholder` quote the generated copy in their
+      // messages (deliberately — that specificity is what makes the retry feedback work).
+      failure: outcome.status === "rejected" && outcome.failure.step === "input" ? outcome.failure : undefined,
     },
     meta: {
       models: meta.models,

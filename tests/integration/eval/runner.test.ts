@@ -23,7 +23,7 @@ const CASES: EvalCase[] = [
 
 async function seedRun(status: "succeeded" | "rejected"): Promise<string> {
   const { rows } = await testPool.query<{ id: string }>(
-    `insert into runs (source, idea, status, prompt_versions, client_ip_hash) values ('eval', 'test idea', $1, '{}'::jsonb, 'hash') returning id`,
+    `insert into runs (source, idea, status, prompt_versions) values ('eval', 'test idea', $1, '{}'::jsonb) returning id`,
     [status],
   );
   return rows[0].id;
@@ -76,7 +76,7 @@ function fakeFetch(passRunId: string, rejectRunId: string) {
     if (body.idea.includes("rejected")) {
       return ndjsonResponse([{ type: "run_started", run_id: rejectRunId }, { type: "result", result: buildResult(rejectRunId, "rejected") }]);
     }
-    return new Response(JSON.stringify({ error: "rate_limited", message: "too many" }), { status: 429 });
+    return new Response(JSON.stringify({ error: "daily_cap_reached", message: "cap reached" }), { status: 429 });
   }) as unknown as typeof fetch;
 }
 

@@ -130,12 +130,11 @@ Index `(source, hidden, category, created_at desc)`.
 | input_tokens, output_tokens, thinking_tokens | int not null default 0 | sums across steps |
 | quality_retries, transport_retries | int not null default 0 | |
 | latency_ms, first_event_ms | int, nullable | server-measured |
-| client_ip_hash | text not null | `sha256(IP_HASH_SALT + ip)`; raw IP never stored |
 | created_at, finished_at | timestamptz | `finished_at` nullable |
 
-Indexes: `(client_ip_hash, created_at)`, `(source, created_at)`.
+Indexes: `(created_at)` (the global cap's count), `(source, created_at)`.
 
-Lifecycle: inserted as `running` when admitted, so in-flight requests count toward rate limits and crashes stay visible; finalized in `finishRun`. Views report `running` rows older than 60 s as `error`.
+Lifecycle: inserted as `running` when admitted, so in-flight requests count toward the cap and crashes stay visible; finalized in `finishRun`. Views report `running` rows older than 60 s as `error`.
 
 **run_steps** — one row per LLM attempt
 | column | type | notes |
@@ -227,7 +226,7 @@ type LlmOutcome =
 
 interface GenerationStore {
   findOption(category: string, optionId?: string): Promise<FeasibilityOption | null>;
-  countRuns(filter: { ipHash?: string; since: Date }): Promise<number>;
+  countRuns(filter: { since: Date }): Promise<number>;
   startRun(run: NewRun): Promise<string>;
   finishRun(record: FinishedRun): Promise<void>;           // one transaction
 }
@@ -308,13 +307,14 @@ Rules live in `lib/domain/guardrails/`; word lists in `config/` as TypeScript mo
 | `packaging.callouts` | packaging | 2–4 callouts, each ≤ 6 words |
 | `packaging.brand_name` | packaging | brand name appears in headline or body |
 | `copy.regulated_claim` | tagline_description, packaging | no regulated-claim phrase |
-| `copy.material` | tagline_description, packaging | a plain mention of a material term must be in the option's `material_terms`; a negated mention ("plastic-free", "no plastic", "without plastic", "free of plastic") must **not** name a term in `material_terms` |
+| `copy.material` | tagline_description, packaging | a plain mention of a material term must be in the option's `material_terms`; a negated mention ("plastic-free", "no plastic", "zero plastic", "without the plastic", "free of any plastic" — a determiner may sit between the negator and the term) must **not** name a term in `material_terms` |
 
 **Invariants**
 - Every attempt's violations are stored in `run_steps`; the final failure in `runs.failure`.
 - Generated content reaches the client only when `status = succeeded`, enforced by one response builder with a unit test (PRD M1).
+- Rule *messages* reach the client only for `step: "input"`. Several messages quote the offending text so the retry feedback can be specific, which is safe precisely because a model-output failure's messages stay server-side [D7].
 
-**Known limitations:** starter word lists need curation; negation detection is pattern-based; the famous-brand check is list-based (no trademark search); prompt injection is mitigated, not prevented; hate and harassment rely on Gemini's safety filters.
+**Known limitations:** starter word lists need curation; negation detection is pattern-based, so a figurative material word ("a canvas for your family's story" on a cotton tee) still reads as a material claim; the famous-brand check is list-based (no trademark search); prompt injection is mitigated, not prevented; hate and harassment rely on Gemini's safety filters.
 
 ### 8. API (Route Handlers)
 
@@ -324,11 +324,10 @@ Every body is validated with Zod. Error body (same shape as `booking-app/lib/api
 |---|---|---|
 | `invalid_input` | 400 | body fails the schema, or unknown category/option |
 | `not_found` | 404 | unknown brand |
-| `rate_limited` | 429 | per-IP limit; includes `retry_after_s` |
-| `daily_cap_reached` | 429 | global rolling-24h cap |
+| `daily_cap_reached` | 429 | global rolling-24h cap; includes `retry_after_s` |
 | `internal` | 500 | unexpected failure before a stream starts |
 
-Guardrail rejections return 200 with `status: "rejected"`. [D19]
+Guardrail rejections return 200 with `status: "rejected"`. [D19] The payload carries `guardrails.failure` only for `step: "input"` — a rule broken by model output is recorded but not shown to the visitor. [D7]
 
 **`POST /api/generate`** — before admission checks, an exact-match cache lookup [D34]: identical idea (trimmed, case-insensitive) + category + feasibility option + current prompt versions + current per-step model returns that run's stored result with `from_cache: true`, no model calls, no new rows, and no charge against the rate limit. User-sourced requests only; eval traffic bypasses it so repeats keep measuring variance.
 
@@ -360,7 +359,7 @@ type GenerateResult = {
   product?: { id; tagline; description; packaging };         // succeeded only
   name_candidates?: { name: string; selected: boolean }[];   // succeeded only; passing candidates only
   guardrails: { quality_retries: number;
-                failure?: { step: StepName | "input"; violations: { rule: string; message: string }[] } };
+                failure?: { step: "input"; violations: { rule: string; message: string }[] } };  // input rejections only [D7]
   meta: { models: Record<StepName, string>; prompt_versions: Record<StepName, string>;
           latency_ms: number; transport_retries: number;
           tokens: { input: number; output: number; thinking: number } };
@@ -384,7 +383,7 @@ type GenerateResult = {
 | `X-Eval-Run-Id` | yes | The calling `eval_runs.id`. Must already exist (`404 unknown_eval_run` if not — the CLI always creates its `eval_runs` row before the first case). Stamped onto `runs.eval_run_id`. |
 | `X-Eval-Prompt-Variant` | no | `step=variant`, e.g. `naming=degraded` (§9 sensitivity proof). Unknown step or variant name → `400 invalid_input`. Only `naming=degraded` exists today. |
 
-A valid token admits the request as `source: "eval"` and **skips `checkRateLimit` entirely** — the harness's own RPM pacing (§9) is the only throttle, and `runs` queries for the app's per-IP/global caps already filter `source = user` (§10), so eval traffic was already invisible to them even before this bypass made it explicit. `GenerateResult`/the stream are otherwise identical to a user-sourced run — the harness reads `run_id`, `status`, `meta`, `name_candidates`, and `guardrails.failure` the same way a browser client would.
+A valid token admits the request as `source: "eval"` and **skips `checkRateLimit` entirely** — the harness's own RPM pacing (§9) is the only throttle, so the cap would only fight that pacing. The exemption is from being *blocked*, not from being counted: since 2026-10-01 the global cap totals every source (§10), so an eval run does spend the day's visible budget. `GenerateResult`/the stream are otherwise identical to a user-sourced run — the harness reads `run_id`, `status`, `meta` and `name_candidates` the same way a browser client would.
 
 **`GET /api/eval/summary?label&limit`** → recent `eval_runs` (newest first, optionally filtered by `label`): `id, label, git_sha, created_at, finished_at, is_baseline, repeats, aggregate, comparison`. Never `eval_results` rows (that detail is for the CLI's own `compare` output, not the UI).
 
@@ -417,12 +416,10 @@ A valid token admits the request as `source: "eval"` and **skips `checkRateLimit
 - **Rate limits** [D16]:
   | Limit | Default | Counted from |
   |---|---|---|
-  | Generations per IP | 10 / hour | `runs` where `source = user`, any status |
-  | Generations globally | 166 / rolling 24 h | `runs` where `source = user` |
-  Global cap = active provider's requests-per-day ÷ 6 (worst case: 3 steps × 2 attempts). Sized 2026-09-20 against Groq's qwen/qwen3.8-27b free tier (1,000 RPD, confirmed at console.groq.com/docs/rate-limits — also 30 RPM/8K TPM/200K TPD, comfortably above what 166 runs/day sustains even at peak). Re-size if `LLM_PROVIDER` changes back to Gemini, whose daily quota is smaller (D26). Requests with no identifiable IP share one bucket.
+  | Generations globally | 166 / rolling 24 h | `runs`, any source, any status |
+  Global cap = active provider's requests-per-day ÷ 6 (worst case: 3 steps × 2 attempts). Sized 2026-09-20 against Groq's qwen/qwen3.8-27b free tier (1,000 RPD, confirmed at console.groq.com/docs/rate-limits — also 30 RPM/8K TPM/200K TPD, comfortably above what 166 runs/day sustains even at peak). Re-size if `LLM_PROVIDER` changes back to Gemini, whose daily quota is smaller (D26). Eval runs are counted but never blocked (§8), so a full fixture pass spends a real share of the day's budget. There is no per-visitor limit — see D16's 2026-10-01 revision.
 - **Billing:** neither provider's project has a billing account, so no charges are possible on either (PRD M6).
-- **Client IP:** first address of `x-forwarded-for`, else `x-real-ip`; hashed with `IP_HASH_SALT`; raw IP never stored.
-- **Public data:** Generate-tab notice (idea stored, may appear publicly; IP hashed for rate limiting only — doesn't name the active LLM provider, D6). Moderation: `update products set hidden = true where id = …`. `/api/runs` exposes metadata only.
+- **Public data:** the app stores no client identifier at all — no IP, hashed or otherwise. Generate-tab notice (idea stored, may appear publicly; doesn't name the active LLM provider, D6). Moderation: `update products set hidden = true where id = …`. `/api/runs` exposes metadata only.
 - **Prompt injection:** §5 prompt construction; §7 known limitations.
 - **Eval harness auth (Stage 2):** `X-Eval-Token` must equal `EVAL_TOKEN`, checked with a constant-time comparison (`crypto.timingSafeEqual`), not `===`. `EVAL_TOKEN` unset means this target doesn't accept eval traffic at all — the deployed public demo (Stage 3) can leave it unset, since a valid token bypasses the rate limits (§8, §9) that otherwise bound the project's free-tier quota.
 
@@ -443,12 +440,10 @@ A valid token admits the request as `source: "eval"` and **skips `checkRateLimit
 | `MODEL_CHEAP` | `gemini-3.5-flash-lite` | set to `qwen/qwen3.8-27b` when `LLM_PROVIDER=qwen` (Groq exposes one model, no separate cheap tier) |
 | `DATABASE_URL` | local compose URL | server-side only |
 | `TEST_DATABASE_URL` | local compose test DB | integration tests |
-| `IP_HASH_SALT` | — | ≥ 16 chars |
-| `RATE_LIMIT_GENERATE_PER_HOUR` | 10 | |
 | `GLOBAL_DAILY_GENERATION_CAP` | 166 | sized to Groq's qwen/qwen3.8-27b free-tier RPD, see §10 |
 | `EVAL_TOKEN` | — | Stage 2; unset disables eval traffic on this target (§10) |
 | `JUDGE_MODEL` | `gemini-3.5-flash-lite` | Stage 2; deliberately a different tier than `MODEL_STRONG` so the judge isn't the same model grading itself (§9, risk table §9 in PRD.md) |
-| `EVAL_TARGET_RPM` | 6 | Stage 2; CLI's own pacing against `--target`, independent of `RATE_LIMIT_GENERATE_PER_HOUR` |
+| `EVAL_TARGET_RPM` | 6 | Stage 2; CLI's own pacing against `--target` |
 
 ### 13. Testing & CI
 - **Unit — domain (no mocks):** every guardrail rule, table-driven, including false positives ("classic", "plastic-free" on a steel bottle, "pet treats"); normalization; name selection; first-run cash; prompt versions; result-builder invariant; request schema; every output schema converts to JSON Schema without unsupported keywords.

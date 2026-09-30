@@ -109,11 +109,17 @@ describe("generationReducer", () => {
     const state = generationReducer(initialGenerationState, {
       type: "admission_error",
       httpStatus: 429,
-      error: "rate_limited",
-      message: "Too many generations",
-      retryAfterS: 3600,
+      error: "daily_cap_reached",
+      message: "The daily generation limit has been reached",
+      retryAfterS: 86_400,
     });
-    expect(state).toEqual({ status: "admission_error", httpStatus: 429, error: "rate_limited", message: "Too many generations", retryAfterS: 3600 });
+    expect(state).toEqual({
+      status: "admission_error",
+      httpStatus: 429,
+      error: "daily_cap_reached",
+      message: "The daily generation limit has been reached",
+      retryAfterS: 86_400,
+    });
   });
 
   it("moves a running generation to run_error if the stream itself fails", () => {

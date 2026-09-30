@@ -76,13 +76,15 @@ Each entry records the decision, why it was made, and the alternatives that were
 ### D5 — The public demo is open, bounded by quota
 **Revised 2026-09-15:** was bounded by a provider spend cap. Changed because the free tier has no spend, only quota.
 
-**Decision:** No login or access code. Per-IP limit (default 10 generations/hour), a rolling 24-hour global cap sized below the project's requests-per-day quota, and no public eval trigger. When Gemini reports the daily quota is exhausted, the UI shows a "demo quota reached" notice and the gallery keeps working.
+**Revised 2026-10-01:** the per-IP limit is gone (see D16). A rolling 24-hour global cap is now the only admission control.
 
-**Why:** The link goes into job applications; any friction lowers the chance a reviewer tries it. A project without billing makes openness safe on cost. The global cap keeps one visitor from exhausting the day's quota for everyone else.
+**Decision:** No login or access code. A rolling 24-hour global cap sized below the project's requests-per-day quota, and no public eval trigger. When the provider reports the daily quota is exhausted, the UI shows a "demo quota reached" notice and the gallery keeps working.
+
+**Why:** The link goes into job applications; any friction lowers the chance a reviewer tries it. A project without billing makes openness safe on cost. The global cap keeps the day's quota from being drained before a reviewer arrives.
 
 **Rejected:**
 - *Access code* — reviewers skimming an application often won't hunt for a code.
-- *Per-IP limit only* — defeated by IP rotation; the global cap is the backstop.
+- *Per-IP limit as well* — see D16's 2026-10-01 revision: it was defeated by IP rotation anyway, it didn't actually prevent exhaustion, and it was the app's only reason to hold anything resembling personal data.
 
 ---
 
@@ -93,7 +95,7 @@ Each entry records the decision, why it was made, and the alternatives that were
 
 **Revised 2026-09-20 (later same day):** the gap this correction surfaced — the app never disclosed that ideas are sent to an LLM at all, not even generically — was itself closed. `GenerateForm.tsx` now adds "Your idea is sent to an AI model to generate the brand copy," still without naming Gemini/Qwen specifically, consistent with the provider-agnostic wording decided above.
 
-**Decision:** All successful user generations appear in the gallery. The Generate tab states upfront that the idea is sent to an AI model, is stored, and may appear publicly, and that the IP address is hashed and used only for rate limiting — none of this names which LLM provider processes it. Offensive items are hidden manually with a `hidden` flag. Eval-generated content never appears.
+**Decision:** All successful user generations appear in the gallery. The Generate tab states upfront that the idea is sent to an AI model, is stored, and may appear publicly — without naming which LLM provider processes it. Offensive items are hidden manually with a `hidden` flag. Eval-generated content never appears.
 
 **Why:** A first-time visitor — often a reviewer — sees a populated gallery instead of an empty page.
 
@@ -101,14 +103,19 @@ Each entry records the decision, why it was made, and the alternatives that were
 
 ---
 
-### D7 — Hard failures show reasons, not content
-**Decision:** A rejected run shows which step failed and plain-language rule messages, with a "Try again" button. No generated content from a failing run is shown.
+### D7 — Hard failures show reasons only for the visitor's own input
+**Revised 2026-10-01:** was "show which step failed and plain-language rule messages" for every rejection. Reversed for rule failures in *model output*: those are our fault, not the visitor's, and a rule list they can't act on is noise. Two messages (`packaging.callouts`, `output.placeholder`) also quote the generated copy verbatim, so showing them contradicted this decision's own "never the failing content" promise — a real leak, found while auditing the rejection path.
 
-**Why:** It keeps the promise that users never see policy-violating output. Visible rule names demonstrate the guardrails working. The rejection rate is measured (PRD M2), so rejections can't hide quality problems.
+**Decision:** A rejection at `step: "input"` — a banned word in the visitor's own idea — shows the rule messages, because only the visitor can fix it. A rejection from model output (naming, tagline_description, packaging) shows a generic notice that owns the failure, with no step name and no rule list. Either way no generated content is shown, and the step plus every violation are still persisted to `runs.failure` and `run_steps.violations`.
+
+**Why:** It keeps the promise that users never see policy-violating output, and it stops charging the visitor for our model's mistakes. The rejection rate is still measured (PRD M2) from the database, and the rule ids still surface on the Runs tab — which is where "demonstrate the guardrails working" actually belongs, since that tab already strips messages (`lib/contracts/runs.ts`) precisely because a message can echo generated content.
+
+**Why the messages keep quoting the copy:** they feed `renderRetryFeedback` — telling the model *which* callout ran long is what makes the retry work. Withholding them at the boundary is better than blunting them at the source.
 
 **Rejected:**
 - *Show the best attempt with a warning* — a banned word or health claim "with a warning" has still been shown.
-- *Auto-regenerate until it passes* — multiplies latency and quota use, and hides the failure rate.
+- *Auto-regenerate until it passes* — multiplies latency and quota use, and hides the failure rate. Still rejected: the retry budget stays at 2 attempts per step. Local data shows every observed first-attempt violation recovered on attempt two, and a third would cut the daily cap from 166 to ~111 to defend a case that hasn't occurred.
+- *Route model-output rejections to the stream's `error` event* — would reclassify them `reject` → `error` in the eval harness, which derives the outcome from `result.status` off the stream; `error` matches no expected outcome, so `outcome_match_rate` would have silently dropped. Omitting `guardrails.failure` from the payload keeps the status honest.
 
 ---
 
@@ -125,6 +132,10 @@ Each entry records the decision, why it was made, and the alternatives that were
 ---
 
 ### D9 — The feasibility lookup runs before generation
+**Revised 2026-10-01:** `copy.material`'s negation detection widened after real stored runs showed it rejecting honest copy. A paper-wrapped snack bar saying "the packaging creates zero plastic waste" and "without the plastic waste" was flagged as *claiming* to be made of plastic: `zero` wasn't a negator, and `without the plastic` broke the `without X` phrase match on the determiner. `zero` is now a negator and one determiner may sit between a negator and the term. Kept deliberately narrow — every widening makes the blunt "mentions X" branch fire less, and that branch is what catches genuinely false material claims.
+
+**Accepted limitation:** a *figurative* material word still reads as a claim. The same audit found a cotton t-shirt rejected for ending "it is a canvas for your family's unique story". Nothing short of understanding the sentence tells that apart from a false claim, so it stands and the quality retry absorbs it.
+
 **Decision:** Look up the feasibility option first, pass material, cost, MOQ and lead time into the agents, and enforce a `copy.material` guardrail. The UI also shows the cash needed for a first production run (MOQ × per-unit cost range).
 
 **Why:** The product's core problem is bridging creative output with physical constraints. With the lookup after generation, the copy can contradict the estimate and nothing notices. The first-run cash figure turns an abstract MOQ into the number a first-time founder actually has to find.
@@ -216,9 +227,15 @@ Each entry records the decision, why it was made, and the alternatives that were
 ---
 
 ### D16 — Rate limits are counted in Postgres
-**Revised 2026-09-20:** `GLOBAL_DAILY_GENERATION_CAP` sized for real (was a 50/day placeholder) — `1000 ÷ 6 = 166`, against Groq's qwen/qwen3.8-27b free tier (1,000 RPD, confirmed at console.groq.com/docs/rate-limits the same day D2/D26 made it the production provider). `RATE_LIMIT_GENERATE_PER_HOUR` (10/IP/hour) wasn't touched — it's an abuse-prevention throttle on a single visitor, not derived from provider quota math, and 10/hour/IP is already far under the ~300/hour system-wide ceiling Groq's 30 RPM implies at 6 calls/run worst case.
+**Revised 2026-09-20:** `GLOBAL_DAILY_GENERATION_CAP` sized for real (was a 50/day placeholder) — `1000 ÷ 6 = 166`, against Groq's qwen/qwen3.8-27b free tier (1,000 RPD, confirmed at console.groq.com/docs/rate-limits the same day D2/D26 made it the production provider). `RATE_LIMIT_GENERATE_PER_HOUR` (10/IP/hour) wasn't touched at the time — it was an abuse-prevention throttle on a single visitor, not derived from provider quota math. It was removed outright on 2026-10-01; see the revision above.
 
-**Decision:** Count recent `runs` rows by hashed IP and globally with an indexed query, using the app server's clock for the window (as `booking-app/lib/rateLimit.ts` does). Requests with no identifiable IP share one bucket.
+**Revised 2026-10-01:** the per-IP limit is removed entirely, and the global cap now counts runs of *every* source, eval included.
+
+Two reasons for dropping per-IP. It didn't do what its name implies: 10/hour over 24h is 240 runs, above the 166/day global cap, so a single address could still drain the day — just more slowly. And it was expensive in a way unrelated to quota: `client_ip_hash` was the only personal data the app held, which meant a salt to protect, a retention question nobody had answered (it was kept forever though only needed for a one-hour window), and a sentence of privacy disclosure on the Generate tab. Dropping the column deleted all three at once. With no billing attached to either provider, the only thing genuinely worth defending is the shared free-tier quota, and the global cap does that directly.
+
+Counting eval runs fixes the inverse bug: they spend the same provider quota, so while they were excluded, a fixture pass could quietly consume a third of the day's real budget while the app still believed it had the full 166 left — and user traffic would then sail past the cap into a raw provider `quota_exhausted` mid-run instead of the graceful `daily_cap_reached` notice that offers the D28 replay. Eval traffic is still never *blocked* (D27), just counted. The operational cost is real and accepted: 20 cases × 3 repeats is 60 runs, ~36% of the cap.
+
+**Decision:** Count recent `runs` rows with an indexed query, using the app server's clock for the window (as `booking-app/lib/rateLimit.ts` does). One rolling-24h global count, every source, any status.
 
 **Why:** Postgres is already there, the rows being counted are written anyway, and demo traffic makes an indexed count cheap. A shared bucket for unknown IPs fails closed.
 
@@ -259,7 +276,7 @@ Each entry records the decision, why it was made, and the alternatives that were
 ---
 
 ### D19 — A guardrail rejection is HTTP 200 with `status: "rejected"`
-**Decision:** Well-formed requests whose generation is rejected by guardrails return 200 with `status: "rejected"`. 4xx is for caller mistakes, 5xx for system failures.
+**Decision:** Well-formed requests whose generation is rejected by guardrails return 200 with `status: "rejected"`. 4xx is for caller mistakes, 5xx for system failures. Since 2026-10-01 the payload carries `guardrails.failure` only for `step: "input"` (D7); the status itself is unchanged for every rejection, which is what keeps the eval harness's classification honest.
 
 **Why:** Rejection is an outcome of a valid request, not an error. With streaming, the status line is sent before the outcome is known anyway.
 
@@ -384,11 +401,11 @@ ESLint `no-restricted-imports` enforces the domain, contracts, and services rule
 ### D27 — Eval traffic is admitted by a shared-secret header, not a separate endpoint, and bypasses rate limits by construction
 **Added 2026-09-17.**
 
-**Decision:** `POST /api/generate` accepts `X-Eval-Token` (must equal `EVAL_TOKEN`, constant-time compared), `X-Eval-Run-Id` (must reference an existing `eval_runs` row), and an optional `X-Eval-Prompt-Variant` (only `naming=degraded` exists, for the D18 sensitivity proof). A valid token admits the request as `source: "eval"` and skips `checkRateLimit` (D16) entirely — `runs`/`countRuns` already filter `source = user` for the per-IP and global caps, so this just makes an existing exemption explicit rather than leaving it as an accidental side effect of how those queries happen to be written. `EVAL_TOKEN` unset (the deployed public demo's default, Stage 3) means the target accepts no eval traffic at all, full stop.
+**Decision:** `POST /api/generate` accepts `X-Eval-Token` (must equal `EVAL_TOKEN`, constant-time compared), `X-Eval-Run-Id` (must reference an existing `eval_runs` row), and an optional `X-Eval-Prompt-Variant` (only `naming=degraded` exists, for the D18 sensitivity proof). A valid token admits the request as `source: "eval"` and skips `checkRateLimit` (D16) entirely, so the harness's own RPM pacing is the only throttle. Since D16's 2026-10-01 revision this exemption is from being *blocked* only — `countRuns` totals every source, so an eval run does spend the day's visible budget. `EVAL_TOKEN` unset (the deployed public demo's default, Stage 3) means the target accepts no eval traffic at all, full stop.
 
 **Why:**
 - No separate `POST /api/eval/run` (already rejected in D3) means the harness has to go through the same admission path a browser uses — a header-based auth scheme is the minimal addition that lets it identify itself without a second endpoint.
-- Bypassing rate limits has to be intentional and gated, not implicit: an eval run of 20 cases × 3 repeats is 60+ generations, which would blow through the default 10/hour, 50/day caps sized for real public traffic (D16) in minutes. The alternative — raising those caps to accommodate eval traffic — would just as directly undermine the reason they exist (bounding the shared free-tier quota, PRD M6).
+- Bypassing the cap has to be intentional and gated, not implicit: an eval run of 20 cases × 3 repeats is 60+ generations, which would blow through a cap sized for real public traffic (D16) in minutes. The alternative — raising those caps to accommodate eval traffic — would just as directly undermine the reason they exist (bounding the shared free-tier quota, PRD M6).
 - The sensitivity proof (PRD M4) needs a way to run the *exact* live pipeline with one prompt swapped, not a hand-maintained parallel copy of `runGeneration` that could drift from the real one. Threading an optional `namingAgentOverride` through `RunGenerationInput` (only ever set from this one header, never reachable from the live UI) keeps the degraded variant honestly running through the same guardrails, retry logic, and persistence as a real request.
 
 **Rejected:**
@@ -405,7 +422,7 @@ ESLint `no-restricted-imports` enforces the domain, contracts, and services rule
 
 The endpoint takes no admission checks at all (no rate limit, no daily cap) — it has to work precisely when the daily quota is exhausted, which is the entire reason it exists, and it never touches the LLM provider's quota in the first place.
 
-The UI (`components/generate/GenerateTab.tsx`) offers "Watch a recorded run instead" only when the failure is quota-shaped — an admission `daily_cap_reached`, or a run-level `quota_exhausted` error — not for `rate_limited` (a per-IP throttle, where an ordinary retry is the right call) or a transient run failure. Every replay is labeled ("Recorded run, replayed with its original timing — not a live generation") for as long as it's on screen, live or finished — showing stored data paced to look like it's happening now, with no label, would be dishonest in exactly the way this project's own "Built honestly" framing argues against.
+The UI (`components/generate/GenerateTab.tsx`) offers "Watch a recorded run instead" only when the failure is quota-shaped — an admission `daily_cap_reached`, or a run-level `quota_exhausted` error — not for a transient run failure (deadline_exceeded/provider_error/internal/aborted), where an ordinary retry is the right call. Every replay is labeled ("Recorded run, replayed with its original timing — not a live generation") for as long as it's on screen, live or finished — showing stored data paced to look like it's happening now, with no label, would be dishonest in exactly the way this project's own "Built honestly" framing argues against.
 
 **Why a separate endpoint, not a `POST /api/generate` mode:**
 - `resume_from_run_id` (D25) is a variant of a real admitted generation — it still checks rate limits, still calls the LLM for whatever wasn't already accepted. A replay does neither, so folding it into the same request schema (`idea`/`category` required today) would mean restructuring `GenerateRequestSchema` into a union just to carry a case that ignores most of its fields.

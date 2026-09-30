@@ -18,8 +18,8 @@ interface RunOverrides {
 async function insertRun(overrides: RunOverrides = {}): Promise<string> {
   const { rows } = await testPool.query<{ id: string }>(
     `insert into runs
-       (source, idea, category, feasibility_option_id, status, failure, prompt_versions, client_ip_hash, created_at)
-     values ('user', 'a reusable water bottle', $1, $2, $3, $4::jsonb, '{}'::jsonb, 'hash-a', coalesce($5::timestamptz, now()))
+       (source, idea, category, feasibility_option_id, status, failure, prompt_versions, created_at)
+     values ('user', 'a reusable water bottle', $1, $2, $3, $4::jsonb, '{}'::jsonb, coalesce($5::timestamptz, now()))
      returning id`,
     [category.category, category.defaultOptionId, overrides.status ?? "succeeded", JSON.stringify(overrides.failure ?? null), overrides.createdAt ?? null],
   );

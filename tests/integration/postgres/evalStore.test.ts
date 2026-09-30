@@ -171,7 +171,7 @@ describe("findEvalCaseBrandId (D31)", () => {
   // when the prerequisite ran in an earlier chunk or on an earlier day.
   async function seedSucceededCase(evalRunId: string, caseId: string, repeat: number, brandName: string): Promise<string> {
     const { rows: runRows } = await testPool.query<{ id: string }>(
-      `insert into runs (source, idea, status, prompt_versions, client_ip_hash) values ('eval', 'idea', 'succeeded', '{}'::jsonb, 'h') returning id`,
+      `insert into runs (source, idea, status, prompt_versions) values ('eval', 'idea', 'succeeded', '{}'::jsonb) returning id`,
     );
     const runId = runRows[0].id;
     const { rows: brandRows } = await testPool.query<{ id: string }>(
@@ -213,7 +213,7 @@ describe("listJudgedOutputs (D33)", () => {
     const seeded = await seedCategory();
     const evalRunId = await createEvalRun(testPool, newEvalRun());
     const { rows: runRows } = await testPool.query<{ id: string }>(
-      `insert into runs (source, idea, status, prompt_versions, client_ip_hash) values ('eval', 'idea', 'succeeded', '{}'::jsonb, 'h') returning id`,
+      `insert into runs (source, idea, status, prompt_versions) values ('eval', 'idea', 'succeeded', '{}'::jsonb) returning id`,
     );
     const runId = runRows[0].id;
     const { rows: brandRows } = await testPool.query<{ id: string }>(

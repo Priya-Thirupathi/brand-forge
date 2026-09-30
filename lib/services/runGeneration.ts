@@ -43,7 +43,6 @@ export interface RunGenerationInput {
   feasibilityOptionId: string;
   option: FeasibilityOptionFacts;
   source: "user" | "eval";
-  clientIpHash: string;
   // Resuming a run that previously failed after at least one step succeeded — steps present
   // here are skipped entirely (no LLM call, no new run_steps row), reusing the already-accepted
   // value straight from lib/adapters/postgres/resume.ts's replay of the old run's raw_output.
@@ -134,7 +133,6 @@ export async function runGeneration(
     idea: input.idea,
     category: input.category.slug,
     feasibilityOptionId: input.feasibilityOptionId,
-    clientIpHash: input.clientIpHash,
     resumedFromRunId: input.resumedFromRunId,
     regeneratedFromRunId: input.regenerate?.fromRunId,
     evalRunId: input.evalRunId,
