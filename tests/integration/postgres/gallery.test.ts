@@ -15,6 +15,7 @@ interface ProductOverrides {
   productHidden?: boolean;
   source?: "user" | "seed" | "eval";
   createdAt?: string;
+  feasibilitySnapshot?: Record<string, unknown>;
 }
 
 async function insertProduct(overrides: ProductOverrides = {}): Promise<{ brandId: string; productId: string }> {
@@ -29,9 +30,9 @@ async function insertProduct(overrides: ProductOverrides = {}): Promise<{ brandI
   const { rows: productRows } = await testPool.query<{ id: string }>(
     `insert into products
        (brand_id, category, feasibility_option_id, feasibility_snapshot, idea, tagline, description, packaging, source, hidden, created_at)
-     values ($1, $2, $3, '{}'::jsonb, 'a reusable water bottle', 'Built for the trail', 'A steel bottle.', '{"headline":"h","body":"b","callouts":[]}'::jsonb, $4, $5, coalesce($6::timestamptz, now()))
+     values ($1, $2, $3, $7::jsonb, 'a reusable water bottle', 'Built for the trail', 'A steel bottle.', '{"headline":"h","body":"b","callouts":[]}'::jsonb, $4, $5, coalesce($6::timestamptz, now()))
      returning id`,
-    [brandId, category.category, category.defaultOptionId, overrides.source ?? "seed", overrides.productHidden ?? false, overrides.createdAt ?? null],
+    [brandId, category.category, category.defaultOptionId, overrides.source ?? "seed", overrides.productHidden ?? false, overrides.createdAt ?? null, JSON.stringify(overrides.feasibilitySnapshot ?? {})],
   );
   return { brandId, productId: productRows[0].id };
 }
@@ -67,6 +68,43 @@ describe("listProducts", () => {
     const page2 = await listProducts(testPool, { limit: 2, cursor: page1.nextCursor! });
     expect(page2.products.map((p) => p.id)).toEqual([first.productId]);
     expect(page2.nextCursor).toBeNull();
+  });
+
+  // Regression: products.feasibility_snapshot stores a FeasibilityOptionFacts (camelCase,
+  // written verbatim by finishRun) while the API contract is snake_case. The adapter used to
+  // type the jsonb as the contract's shape and pass it through, so every price and lead time
+  // came back undefined and the gallery rendered "USD -" for months. A jsonb column is cast,
+  // not validated, so only a test with a realistic snapshot catches this — the fixture above
+  // seeds '{}' and never would.
+  it("maps the stored camelCase feasibility snapshot onto the snake_case contract", async () => {
+    const { productId } = await insertProduct({
+      feasibilitySnapshot: {
+        material: "Stainless Steel",
+        materialTerms: ["steel", "stainless steel"],
+        costLow: 3.2,
+        costHigh: 4.8,
+        currency: "USD",
+        moq: 500,
+        leadTimeDaysLow: 35,
+        leadTimeDaysHigh: 50,
+        assumptions: "illustrative",
+      },
+    });
+
+    const { products } = await listProducts(testPool, { limit: 10 });
+    const snapshot = products.find((p) => p.id === productId)?.feasibility_snapshot;
+
+    expect(snapshot).toEqual({
+      material: "Stainless Steel",
+      material_terms: ["steel", "stainless steel"],
+      cost_low: 3.2,
+      cost_high: 4.8,
+      currency: "USD",
+      moq: 500,
+      lead_time_days_low: 35,
+      lead_time_days_high: 50,
+      assumptions: "illustrative",
+    });
   });
 
   it("returns a null cursor for a malformed cursor value instead of throwing", async () => {

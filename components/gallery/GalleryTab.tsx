@@ -5,6 +5,7 @@ import type { CategorySummary } from "@/lib/contracts/catalog";
 import type { GalleryProduct } from "@/lib/contracts/gallery";
 import type { FollowUpTarget } from "@/components/generate/GenerateTab";
 import { Gallery } from "./Gallery";
+import { ProductDetailModal } from "./ProductDetailModal";
 
 interface GalleryTabProps {
   onFollowUp: (target: FollowUpTarget) => void;
@@ -15,6 +16,7 @@ export function GalleryTab({ onFollowUp }: GalleryTabProps) {
   const [categorySlug, setCategorySlug] = useState("");
   const [products, setProducts] = useState<GalleryProduct[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<GalleryProduct | null>(null);
 
   useEffect(() => {
     fetch("/api/categories")
@@ -57,7 +59,18 @@ export function GalleryTab({ onFollowUp }: GalleryTabProps) {
 
       {error && <p className="text-sm text-danger">{error}</p>}
       {!error && !products && <p className="text-sm text-muted">Loading…</p>}
-      {products && <Gallery products={products} onFollowUp={onFollowUp} />}
+      {products && <Gallery products={products} onSelect={setSelected} />}
+
+      {/* Keyed so switching cards remounts: the modal's own "which sibling am I showing"
+          state should start fresh on each open, not carry over from the last product. */}
+      {selected && (
+        <ProductDetailModal
+          key={selected.id}
+          product={selected}
+          onClose={() => setSelected(null)}
+          onFollowUp={onFollowUp}
+        />
+      )}
     </div>
   );
 }

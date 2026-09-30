@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import type { BrandDetail, GalleryProduct } from "@/lib/contracts/gallery";
+import type { FeasibilityOptionFacts } from "@/lib/domain/types";
 import { decodeCursor, encodeCursor } from "../pagination";
 
 interface ProductRow {
@@ -11,9 +12,28 @@ interface ProductRow {
   tagline: string;
   description: string;
   packaging: GalleryProduct["packaging"];
-  feasibility_snapshot: GalleryProduct["feasibility_snapshot"];
+  // The column holds a FeasibilityOptionFacts exactly as runGeneration passed it to finishRun —
+  // camelCase, the domain's own shape — while the API contract is snake_case like every other
+  // field. Typing the row as the contract's shape (as this did until 2026-10-01) made every
+  // read silently `undefined`: a jsonb column is cast, never validated, so nothing complained
+  // and the gallery quietly rendered "USD -" for every price.
+  feasibility_snapshot: FeasibilityOptionFacts;
   source: "user" | "seed";
   created_at: Date;
+}
+
+function toFeasibilitySnapshot(facts: FeasibilityOptionFacts): GalleryProduct["feasibility_snapshot"] {
+  return {
+    material: facts.material,
+    material_terms: facts.materialTerms,
+    cost_low: facts.costLow,
+    cost_high: facts.costHigh,
+    currency: facts.currency,
+    moq: facts.moq,
+    lead_time_days_low: facts.leadTimeDaysLow,
+    lead_time_days_high: facts.leadTimeDaysHigh,
+    assumptions: facts.assumptions,
+  };
 }
 
 function toGalleryProduct(row: ProductRow): GalleryProduct {
@@ -28,7 +48,7 @@ function toBrandProduct(row: ProductRow): Omit<GalleryProduct, "brand"> {
     tagline: row.tagline,
     description: row.description,
     packaging: row.packaging,
-    feasibility_snapshot: row.feasibility_snapshot,
+    feasibility_snapshot: toFeasibilitySnapshot(row.feasibility_snapshot),
     source: row.source,
     created_at: row.created_at.toISOString(),
   };
